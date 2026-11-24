@@ -1,10 +1,4 @@
-"""夜盤盤前快報
-
-早上排程（台灣 08:00，夜盤 05:00 收完、開盤 09:00 前）讀昨晚台指期夜盤
-+ 昨日選股訊號，推播今日開盤方向預判與個股順風/逆風對照。
-
-執行: uv run python premarket.py
-"""
+"""夜盤與美股連動盤前快報"""
 
 import os
 import sys
@@ -19,6 +13,7 @@ except ImportError:
 from stock_strategies.night_session import get_night_session
 from stock_strategies.sheet import read_latest_signals
 from stock_strategies.notify import send_telegram, format_premarket
+from stock_strategies.us_market import get_us_market_summary
 
 
 REQUIRED_ENV = [
@@ -36,7 +31,6 @@ def main():
         print(f"❌ 缺少環境變數: {missing}", file=sys.stderr)
         sys.exit(1)
 
-    # 1. 取得台指期夜盤
     print(f"[{datetime.now()}] 取得台指期夜盤...")
     night = get_night_session()
     if night:
@@ -44,9 +38,6 @@ def main():
     else:
         print("  → 夜盤資料暫時取不到")
 
-    # 2. 讀昨日訊號（沿用 14:30 排程寫進 Signals 分頁的結果）
-    #    讀 300 筆以涵蓋多日（單日掃描可能就數十筆 SKIP），
-    #    format_premarket 會自動挑「最近一批有 BUY/WATCH」的日期。
     print("讀取昨日訊號...")
     try:
         signals = read_latest_signals(limit=300)
@@ -55,9 +46,12 @@ def main():
         signals = []
     print(f"  → {len(signals)} 筆")
 
-    # 3. 發送 Telegram 盤前快報
+    print("取得美股隔夜表現與供應鏈連動...")
+    us_summary = get_us_market_summary(signals=signals, threshold=2.0)
+
     print("發送 Telegram 盤前快報...")
-    send_telegram(format_premarket(night, signals))
+    full_message = format_premarket(night, signals) + us_summary
+    send_telegram(full_message)
     print("✅ 完成")
 
 
