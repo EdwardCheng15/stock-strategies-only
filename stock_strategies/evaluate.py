@@ -8,19 +8,31 @@ from .data import get_fundamental, get_price_history
 from .indicators import add_indicators, tech_score_at
 from .backtest import backtest
 from .volume import detect_patterns, verdict as volume_verdict
+import json
+import pathlib
 from .loader import merge_params
+from .sector_router import resolve_strategy_for_stock
 
 
 def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional[dict]:
-    """評估一檔股票。strategy 為策略 dict（含 params），不給就用預設值。"""
+    """評估一檔股票。若未指定特殊策略，自動依所屬產業套用對應策略檔。"""
+    explicit_id = (strategy or {}).get("id", "")
+    strat_name, sector_label = resolve_strategy_for_stock(stock_id, explicit_id)
+
+    if strategy is None or explicit_id in ("", "default", "auto"):
+        strat_file = pathlib.Path("strategies") / f"{strat_name}.json"
+        if strat_file.exists():
+            strategy = json.loads(strat_file.read_text())
+            strategy["id"] = strat_name
+
     params = merge_params(strategy)
 
     result = {
         "stock_id": stock_id,
         "name": name,
         "date": datetime.now().strftime("%Y-%m-%d"),
-        "strategy_id": (strategy or {}).get("id", "default"),
-        "risk_notes": [],
+        "strategy_id": (strategy or {}).get("id", strat_name),
+        "risk_notes": [f"產業策略：{sector_label}({strat_name})"],
     }
 
     try:
