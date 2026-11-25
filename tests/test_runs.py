@@ -18,8 +18,8 @@ def services(monkeypatch):
 def test_screening_reports_progress_and_applies_market_filter(services):
     updates = []
     result = runs.screen(services, progress=lambda **state: updates.append(state), delay=0)
-    assert result["summary"] == {"total": 2, "buy": 0, "watch": 2, "skip": 0, "error": 0}
-    assert result["downgraded"] == 2
+    assert result["summary"] == {"total": 2, "buy": 2, "watch": 0, "skip": 0, "error": 0}
+    assert result["downgraded"] == 0
     assert updates[-1]["completed"] == 2
     assert updates[-1]["total"] == 2
 

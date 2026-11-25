@@ -17,9 +17,10 @@ from .sector_router import resolve_strategy_for_stock
 def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional[dict]:
     """評估一檔股票。若未指定特殊策略，自動依所屬產業套用對應策略檔。"""
     explicit_id = (strategy or {}).get("id", "")
+    has_custom_params = bool(strategy and strategy.get("params"))
     strat_name, sector_label, cycle_info = resolve_strategy_for_stock(stock_id, explicit_id)
 
-    if strategy is None or explicit_id in ("", "default", "auto"):
+    if not has_custom_params and explicit_id in ("", "default", "auto"):
         strat_file = pathlib.Path("strategies") / f"{strat_name}.json"
         if strat_file.exists():
             strategy = json.loads(strat_file.read_text())
