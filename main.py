@@ -36,6 +36,7 @@ from stock_strategies.night_session import (
     night_filter_note,
 )
 from stock_strategies.performance import update_performance, summary as perf_summary
+from stock_strategies.market_scanner import format_market_breakout_top5
 
 
 REQUIRED_ENV = [
@@ -126,6 +127,15 @@ def main():
     for msg in format_messages(results, watchlist, market=market, night_note=night_note):
         send_telegram(msg)
         time.sleep(0.5)
+
+    # 7b. 雙軌並行：發送今日全市場突圍 TOP 5（自動排除既有觀察名單標的）
+    print("掃描全市場突圍 TOP 5...")
+    try:
+        watch_codes = {str(w["stock_id"]).strip() for w in watchlist}
+        breakout_msg = format_market_breakout_top5(exclude_codes=watch_codes, top_n=5)
+        send_telegram(breakout_msg)
+    except Exception as e:
+        print(f"⚠️ 全市場突圍掃描失敗: {e}", file=sys.stderr)
 
     # 8. 若有累積的成績單，額外推一則摘要
     if stats and stats["count"] >= 5:
