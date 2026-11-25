@@ -57,7 +57,7 @@ def main():
     # 1. 讀取 watchlist
     print(f"[{datetime.now()}] 讀取 watchlist...")
     watchlist = read_watchlist()
-    print(f"  → {len(combined_list)} 檔啟用中")
+    print(f"  → {len(watchlist)} 檔啟用中")
 
     # 2. 取得大盤狀態（濾鏡）
     print("取得大盤狀態...")
