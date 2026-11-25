@@ -32,13 +32,18 @@ def get_market_state(ma_period: int = 20) -> dict:
 
 
 def apply_market_filter(results: list[dict], market: dict) -> int:
-    """若空頭，把 BUY 降為 WATCH。回傳被降級的數量。"""
+    """大盤跌破月線時採「扣 6 分制」：扣除後仍達 62 分者保留 BUY（逆勢領頭羊），其餘降為 WATCH。"""
     if market.get("bullish", True):
         return 0
     downgraded = 0
     for r in results:
         if r.get("action") == "BUY":
-            r["action"] = "WATCH"
-            r.setdefault("risk_notes", []).append("大盤跌破月線，自動降為 WATCH")
-            downgraded += 1
+            new_score = round(r.get("signal_score", 0) - 6.0, 1)
+            r["signal_score"] = new_score
+            if new_score < 62.0:
+                r["action"] = "WATCH"
+                r.setdefault("risk_notes", []).append("大盤破月線扣6分，轉為 WATCH")
+                downgraded += 1
+            else:
+                r.setdefault("risk_notes", []).append("大盤破月線(扣6分仍強勢)，保留 BUY")
     return downgraded

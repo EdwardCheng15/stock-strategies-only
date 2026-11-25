@@ -36,7 +36,7 @@ from stock_strategies.night_session import (
     night_filter_note,
 )
 from stock_strategies.performance import update_performance, summary as perf_summary
-from stock_strategies.market_scanner import format_market_breakout_top5
+from stock_strategies.market_scanner import format_market_breakout_top5, scan_dynamic_candidates
 
 
 REQUIRED_ENV = [
@@ -57,7 +57,7 @@ def main():
     # 1. 讀取 watchlist
     print(f"[{datetime.now()}] 讀取 watchlist...")
     watchlist = read_watchlist()
-    print(f"  → {len(watchlist)} 檔啟用中")
+    print(f"  → {len(combined_list)} 檔啟用中")
 
     # 2. 取得大盤狀態（濾鏡）
     print("取得大盤狀態...")
@@ -70,12 +70,30 @@ def main():
     night_note = night_filter_note(night)
     print(f"  → {night_note}")
 
+    # 2c. 併入全市場動能突圍前 12 名進入正式評分池（排除既有 watchlist）
+    watch_codes = {str(w["stock_id"]).strip() for w in watchlist}
+    dynamic_pool = []
+    try:
+        cands = scan_dynamic_candidates(min_volume=2000, min_pct=2.5, max_pct=8.5, top_n=20)
+        for c in cands:
+            if str(c["code"]) not in watch_codes and len(dynamic_pool) < 12:
+                dynamic_pool.append({
+                    "stock_id": str(c["code"]),
+                    "name": f"{c['name']}[全市場突圍]",
+                    "strategy": "default",
+                })
+        print(f"🔥 全市場動能候選池：額外納入 {len(dynamic_pool)} 檔強勢突圍股進入精算")
+    except Exception as e:
+        print(f"⚠️ 全市場候選池取得失敗: {e}")
+
+    combined_list = list(watchlist) + dynamic_pool
+
     # 3. 個股評分
     results = []
-    for i, row in enumerate(watchlist, 1):
+    for i, row in enumerate(combined_list, 1):
         sid = str(row["stock_id"])
         name = row.get("name", "")
-        print(f"[{i}/{len(watchlist)}] {sid} {name}")
+        print(f"[{i}/{len(combined_list)}] {sid} {name}")
         r = evaluate(sid, name)
         if r:
             results.append(r)
