@@ -1,19 +1,22 @@
-"""全市場產業別自動對照與策略路由器"""
+"""全市場產業別自動對照、產業週期判定與策略路由器"""
 
 from __future__ import annotations
 import requests
+import yfinance as yf
 
-# 證交所/櫃買官方產業代碼對照表
-# 電子科技類：24(半導體), 25(電腦週邊), 26(光電), 27(通信網路), 28(電子零組件), 29(電子通路), 30(資訊服務), 31(其他電子)
 TECH_CODES = {"24", "25", "26", "27", "28", "29", "30", "31"}
-
-# 金融保險類：17(金融保險)
 FINANCE_CODES = {"17"}
-
-# 景氣循環與原物料類：01(水泥), 03(塑膠), 08(造紙), 10(鋼鐵), 11(橡膠), 14(建材營造), 15(航運), 21(化學), 23(油電燃氣)
 CYCLICAL_CODES = {"01", "03", "08", "10", "11", "14", "15", "21", "23"}
 
-_INDUSTRY_CACHE: dict[str, tuple[str, str]] = {}  # code -> (strategy_name, sector_label)
+SECTOR_BENCHMARKS = {
+    "sector_tech": ["0052.TW", "2330.TW"],
+    "sector_finance": ["0055.TW"],
+    "sector_cyclical": ["2603.TW", "2002.TW"],
+    "sector_general": ["0050.TW", "1216.TW"],
+}
+
+_INDUSTRY_CACHE: dict[str, tuple[str, str]] = {}
+_CYCLE_CACHE: dict[str, dict] = {}
 
 
 def _classify_code(ind_code: str) -> tuple[str, str]:
@@ -28,11 +31,8 @@ def _classify_code(ind_code: str) -> tuple[str, str]:
 
 
 def load_industry_map() -> dict[str, tuple[str, str]]:
-    """載入全市場上市櫃股票之產業分類快取（單次執行僅抓一次）"""
     if _INDUSTRY_CACHE:
         return _INDUSTRY_CACHE
-
-    # 1. 上市公司基本資料
     try:
         r1 = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=15)
         for item in r1.json():
@@ -43,7 +43,6 @@ def load_industry_map() -> dict[str, tuple[str, str]]:
     except Exception as e:
         print(f"⚠️ 上市產業對照載入異常: {e}")
 
-    # 2. 上櫃公司基本資料
     try:
         r2 = requests.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O", timeout=15)
         for item in r2.json():
@@ -53,15 +52,67 @@ def load_industry_map() -> dict[str, tuple[str, str]]:
                 _INDUSTRY_CACHE[sid] = _classify_code(ind)
     except Exception as e:
         print(f"⚠️ 上櫃產業對照載入異常: {e}")
-
     return _INDUSTRY_CACHE
 
 
-def resolve_strategy_for_stock(stock_id: str, explicit_strategy: str = "") -> tuple[str, str]:
-    """回傳 (應套用的策略名稱, 產業標籤)"""
+def get_sector_cycles() -> dict[str, dict]:
+    if _CYCLE_CACHE:
+        return _CYCLE_CACHE
+
+    all_syms = [s for syms in SECTOR_BENCHMARKS.values() for s in syms]
+    try:
+        df = yf.download(all_syms, period="100d", progress=False, auto_adjust=True)["Close"]
+    except Exception as e:
+        print(f"⚠️ 產業週期資料抓取失敗: {e}")
+        df = None
+
+    adjust_rules = {
+        "sector_tech": (-3.0, 0.0, 6.0),
+        "sector_finance": (-2.0, 0.0, 5.0),
+        "sector_cyclical": (-4.0, 0.0, 8.0),
+        "sector_general": (-2.0, 0.0, 5.0),
+    }
+
+    for sector_key, syms in SECTOR_BENCHMARKS.items():
+        exp_adj, neu_adj, con_adj = adjust_rules[sector_key]
+        if df is None or df.empty:
+            _CYCLE_CACHE[sector_key] = {"phase": "中性震盪期", "emoji": "🟡", "threshold_adj": neu_adj}
+            continue
+
+        bull_signals = 0
+        bear_signals = 0
+        valid_cnt = 0
+
+        for sym in syms:
+            if sym not in df.columns:
+                continue
+            s = df[sym].dropna()
+            if len(s) < 60:
+                continue
+            valid_cnt += 1
+            close = float(s.iloc[-1])
+            ma20 = float(s.tail(20).mean())
+            ma60 = float(s.tail(60).mean())
+
+            if close > ma20 and ma20 > ma60:
+                bull_signals += 1
+            elif close < ma20 and close < ma60:
+                bear_signals += 1
+
+        if valid_cnt > 0 and bull_signals == valid_cnt:
+            _CYCLE_CACHE[sector_key] = {"phase": "擴張主升期", "emoji": "🟢", "threshold_adj": exp_adj}
+        elif valid_cnt > 0 and bear_signals == valid_cnt:
+            _CYCLE_CACHE[sector_key] = {"phase": "修正收縮期", "emoji": "🔴", "threshold_adj": con_adj}
+        else:
+            _CYCLE_CACHE[sector_key] = {"phase": "復甦震盪期", "emoji": "🟡", "threshold_adj": neu_adj}
+
+    return _CYCLE_CACHE
+
+
+def resolve_strategy_for_stock(stock_id: str, explicit_strategy: str = "") -> tuple[str, str, dict]:
     mapping = load_industry_map()
     strat, label = mapping.get(str(stock_id).strip(), ("sector_general", "綜合產業"))
-    # 若使用者在 Google Sheet 手動指定了特定策略（非空且非 default），尊重手動設定；否則依產業自動分派
-    if explicit_strategy and explicit_strategy not in ("default", "auto", ""):
-        return explicit_strategy, label
-    return strat, label
+    chosen_strat = explicit_strategy if explicit_strategy and explicit_strategy not in ("default", "auto", "") else strat
+    cycles = get_sector_cycles()
+    cycle_info = cycles.get(chosen_strat, {"phase": "復甦震盪期", "emoji": "🟡", "threshold_adj": 0.0})
+    return chosen_strat, label, cycle_info

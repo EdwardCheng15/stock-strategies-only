@@ -17,7 +17,7 @@ from .sector_router import resolve_strategy_for_stock
 def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional[dict]:
     """評估一檔股票。若未指定特殊策略，自動依所屬產業套用對應策略檔。"""
     explicit_id = (strategy or {}).get("id", "")
-    strat_name, sector_label = resolve_strategy_for_stock(stock_id, explicit_id)
+    strat_name, sector_label, cycle_info = resolve_strategy_for_stock(stock_id, explicit_id)
 
     if strategy is None or explicit_id in ("", "default", "auto"):
         strat_file = pathlib.Path("strategies") / f"{strat_name}.json"
@@ -26,13 +26,18 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
             strategy["id"] = strat_name
 
     params = merge_params(strategy)
+    adj = float(cycle_info.get("threshold_adj", 0.0))
+    params["min_total_score_for_buy"] = round(params["min_total_score_for_buy"] + adj, 1)
+    adj_str = f"{adj:+.0f}分" if adj != 0 else "維持"
 
     result = {
         "stock_id": stock_id,
         "name": name,
         "date": datetime.now().strftime("%Y-%m-%d"),
         "strategy_id": (strategy or {}).get("id", strat_name),
-        "risk_notes": [f"產業策略：{sector_label}({strat_name})"],
+        "risk_notes": [
+            f"{cycle_info['emoji']} {sector_label}｜{cycle_info['phase']}（買進門檻 {params['min_total_score_for_buy']:.0f} 分 / {adj_str}）"
+        ],
     }
 
     try:
