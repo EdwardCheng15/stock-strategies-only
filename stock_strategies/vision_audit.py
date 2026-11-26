@@ -40,7 +40,7 @@ def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_
     cap = float(os.environ.get("TOTAL_CAPITAL", "200000") or 200000)
     lines = [f"🩺 *持倉移動停利健檢報告*\n{'✅ 已同步雲端庫存 (Upsert)' if save else '👀 純健檢模式（未異動庫存）'}"]
     if header_note: lines.append(header_note)
-    merged, items_val, total_val = dict(old_map), [], 0.0
+    merged, items_val, total_val, total_mv = dict(old_map), [], 0.0, 0.0
     for pos in positions:
         sid, name, cost, shares = str(pos["stock_id"]).strip(), pos.get("name", ""), float(pos["avg_cost"]), int(pos.get("shares", 0))
         try:
@@ -60,15 +60,18 @@ def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_
                 low20 = float(cs.tail(20).min())
                 h["advice"] = f"🟡 深套反彈站上月線({ma20:.2f})，可分批減碼降成本" if c_px >= ma20 else f"🟣 歷史深套整理（月線反壓 {ma20:.2f}｜破20日低 {low20:.2f} 停損）"
             mv = c_px * shares if shares > 0 else 0.0
-            total_val += mv
-            items_val.append((sid, name, is_etf, mv))
+            cv = cost * shares if shares > 0 else 0.0  # 投入成本：水位與集中度以此計算，不隨每日股價波動
+            total_val += cv
+            total_mv += mv
+            items_val.append((sid, name, is_etf, cv))
             lines.append(f"• *{sid} {name}* ({f'{shares:,}股 | ' if shares > 0 else ''}成本 {cost:.2f} → 現價 {c_px:.2f} | {h['pnl_pct']:+.1f}%)\n  基因：{lbl.replace('nan%', 'N/A')}（波段高 {peak:.2f}）\n  {h['advice']}")
         except Exception as e:
             lines.append(f"• *{sid} {name}*：⚠️ 健檢失敗 ({e})")
     if total_val > 0 and cap > 0:
         expo_pct = total_val / cap * 100
         conc = [f"{s}({v/total_val*100:.0f}%)" for s, _, etf, v in items_val if not etf and v / total_val > 0.25]
-        lines.append(f"\n💰 *資金水位*：現值 ${total_val:,.0f} / 總資金 ${cap:,.0f}（水位 *{expo_pct:.1f}%*，上限 70% 剩餘 ${max(0, cap*0.7-total_val):,.0f}）")
+        lines.append(f"\n💰 *資金水位（以投入成本計）*：成本 ${total_val:,.0f} / 總資金 ${cap:,.0f}（水位 *{expo_pct:.1f}%*，上限 70% 剩餘 ${max(0, cap*0.7-total_val):,.0f}）")
+        lines.append(f"📊 目前市值 ${total_mv:,.0f}（未實現損益 {total_mv-total_val:+,.0f}）")
         if conc: lines.append(f"⚠️ *單一個股集中度過高(>25%)*：{'、'.join(conc)}")
     if save: save_positions(list(merged.values()))
     return "\n".join(lines)
@@ -132,6 +135,6 @@ def buy_positions(tokens: list[str]) -> str:
             logs.append(f"🆕 *{sid} {name}* 建倉 {qty:,} 股 @ {px:.2f}")
     save_positions(list(pos_map.values()))
     cap = float(os.environ.get("TOTAL_CAPITAL", "200000") or 200000)
-    est_val = sum(int(p.get("shares", 0)) * float(p.get("peak_price") or p.get("avg_cost") or 0) for p in pos_map.values())
-    warn = f"\n⚠️ 估算總曝險 {est_val/cap*100:.1f}% 已超過 70% 上限！" if cap > 0 and est_val > cap * 0.7 else ""
+    est_val = sum(int(p.get("shares", 0)) * float(p.get("avg_cost") or 0) for p in pos_map.values())
+    warn = f"\n⚠️ 投入成本水位 {est_val/cap*100:.1f}% 已超過 70% 上限！" if cap > 0 and est_val > cap * 0.7 else ""
     return "\n".join(logs) + f"\n📦 目前庫存共 {len(pos_map)} 檔{warn}"
