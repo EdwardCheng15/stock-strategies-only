@@ -36,22 +36,20 @@ def parse_broker_screenshot(image_path: str | pathlib.Path) -> list[dict[str, An
         "若截圖顯示張數（例如 2 張），請換算為股數（2000）。"
     )
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": mime, "data": b64_img}},
-            ]
-        }]
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    payload = {"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": b64_img}}]}]}
+    data = None
+    last_err = ""
+    for model in ("gemini-2.5-flash-lite", "gemini-3-flash-preview", "gemini-flash-latest"):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                break
+        except Exception as e:
+            last_err = f"{model}: {e}"
+    if data is None:
+        raise RuntimeError(f"Vision API 失敗 ({last_err})")
 
     raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
     raw_text = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
