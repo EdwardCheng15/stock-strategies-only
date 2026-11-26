@@ -5,7 +5,11 @@ from .sector_router import classify_stock_archetype
 from .portfolio_guard import check_holding_health, load_positions, save_positions
 
 ARCH_SL = {"archetype_growth": 0.08, "archetype_turnaround": 0.07, "archetype_value": 0.05, "archetype_etf": 0.12}
-OWNER_TOKENS = ("戴淯澤", "0323967")
+def _owner_tokens() -> tuple[str, ...]:
+    """本人帳戶標記（戶名/帳號），從 .env 的 OWNER_MARKERS 讀取，以逗號分隔。
+    未設定時回傳空 tuple → sync 一律降級為純健檢（fail-closed）。"""
+    raw = os.environ.get("OWNER_MARKERS", "")
+    return tuple(t.strip() for t in raw.split(",") if t.strip())
 PROMPT = "解析台灣證券截圖，只回傳純JSON物件：{\"account_header\":\"上方帳號或戶名(無則空字串)\",\"positions\":[{\"stock_id\":\"代號\",\"name\":\"名稱\",\"shares\":整數股數,\"avg_cost\":成本價}]}。1張=1000股，無股數填0。"
 
 def parse_broker_screenshot(image_path: str | pathlib.Path) -> tuple[str, list[dict[str, Any]]]:
@@ -65,13 +69,13 @@ def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_
         expo_pct = total_val / cap * 100
         conc = [f"{s}({v/total_val*100:.0f}%)" for s, _, etf, v in items_val if not etf and v / total_val > 0.25]
         lines.append(f"\n💰 *資金水位*：現值 ${total_val:,.0f} / 總資金 ${cap:,.0f}（水位 *{expo_pct:.1f}%*，上限 70% 剩餘 ${max(0, cap*0.7-total_val):,.0f}）")
-        if conc: lines.append(f"⚠️ *單一個股集中度過高(>25%)*：{", ".join(conc)}")
+        if conc: lines.append(f"⚠️ *單一個股集中度過高(>25%)*：{'、'.join(conc)}")
     if save: save_positions(list(merged.values()))
     return "\n".join(lines)
 
 def audit_from_screenshot(image_path: str | pathlib.Path, want_sync: bool = False) -> str:
     header, positions = parse_broker_screenshot(image_path)
-    if want_sync and not any(t in header for t in OWNER_TOKENS):
+    if want_sync and not any(t in header for t in _owner_tokens()):
         return audit_positions(positions, save=False, header_note=f"⚠️ 帳戶「{header or '未識別'}」非本人，已轉為純健檢模式。")
     return audit_positions(positions, save=want_sync, header_note=(f"🔐 帳戶驗證通過：{header}" if want_sync and header else ""))
 

@@ -27,3 +27,6 @@ web/node_modules/
 web/.next/
 web/tsconfig.tsbuildinfo
 web/.env*.local
+
+# 個人持倉（以 Google Sheets Positions 分頁為準，本地檔僅為快取）
+positions.json
