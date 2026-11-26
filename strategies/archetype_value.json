@@ -13,7 +13,7 @@
     "hold_days": 20,
     "min_tech_score_for_signal": 60,
     "target_return": 0.1,
-    "stop_loss": 0.08,
+    "stop_loss": 0.05,
     "weight_fundamental": 0.3,
     "weight_technical": 0.3,
     "weight_backtest": 0.4,
@@ -35,6 +35,9 @@
       "chips.foreign_holding_up": 0.2,
       "chips.foreign_buy_streak": 0.1,
       "momentum.above_mas": 0.2
-    }
+    },
+    "stop_loss_pct": 0.05,
+    "take_profit_pct": 0.1,
+    "max_gap_up_pct": 0.025
   }
 }

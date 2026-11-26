@@ -53,11 +53,11 @@ def _format_stock_detail(s: dict, show_trend: bool = True) -> list[str]:
             f"距高點{t.get('pct_from_high', 0):.0f}% | {ma_status} | {vol_note}"
         )
     lines.append(
-        f"📌 *明日開盤進場* | 參考價 {s['entry_price']}"
+        f"📌 *明日開盤進場* | 參考價 {s['entry_price']} (追價上限 {s.get('max_entry_price', round(float(s['entry_price'])*1.035, 2))} / +{s.get('max_gap_up_pct', 3.5):.1f}%)"
     )
     lines.append(
-        f"停損 {s['stop_loss_price']} (-{CONFIG['stop_loss']*100:.0f}%) / "
-        f"目標 {s['target_price']} (+{CONFIG['target_return']*100:.0f}%)"
+        f"停損 {s['stop_loss_price']} (-{s.get('stop_loss_pct', CONFIG['stop_loss']*100):.0f}%) / "
+        f"目標 {s['target_price']} (+{s.get('take_profit_pct', CONFIG['target_return']*100):.0f}%)"
     )
     lines.append(
         f"風報比 1:{s['risk_reward_ratio']} | 建議部位 {s['position_size_pct']}%"

@@ -105,6 +105,10 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                     base_score = (1.0 - v34_weight) * base_score + v34_weight * v34_score
                     result["v34_score"] = round(v34_score, 1)
                     result["risk_notes"].append(f"V3.4多因子綜合分: {v34_score:.1f}")
+                    if strat_name == "archetype_turnaround":
+                        if float(f_sc.get("chips.inst_net_strength") or 0.5) < 0.45 and float(f_sc.get("revenue.mom_turn") or 0.5) < 0.50:
+                            base_score -= 8.0
+                            result["risk_notes"].append("轉折缺乏法人與營收支撐(扣8分防假突破)")
             except Exception as v_err:
                 result["risk_notes"].append(f"V3.4因子略過({type(v_err).__name__})")
 
