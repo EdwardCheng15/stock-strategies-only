@@ -11,38 +11,41 @@ from .volume import detect_patterns, verdict as volume_verdict
 import json
 import pathlib
 from .loader import merge_params
-from .sector_router import resolve_strategy_for_stock
+from .sector_router import classify_stock_archetype
+from .context import build_context
+from .factors.registry import compute_all_factors
 
 
 def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional[dict]:
     """評估一檔股票。若未指定特殊策略，自動依所屬產業套用對應策略檔。"""
     explicit_id = (strategy or {}).get("id", "")
     has_custom_params = bool(strategy and strategy.get("params"))
-    strat_name, sector_label, cycle_info = resolve_strategy_for_stock(stock_id, explicit_id)
-
-    if not has_custom_params and explicit_id in ("", "default", "auto"):
-        strat_file = pathlib.Path("strategies") / f"{strat_name}.json"
-        if strat_file.exists():
-            strategy = json.loads(strat_file.read_text())
-            strategy["id"] = strat_name
-
     params = merge_params(strategy)
-    adj = float(cycle_info.get("threshold_adj", 0.0))
-    params["min_total_score_for_buy"] = round(params["min_total_score_for_buy"] + adj, 1)
-    adj_str = f"{adj:+.0f}分" if adj != 0 else "維持"
-
     result = {
         "stock_id": stock_id,
         "name": name,
         "date": datetime.now().strftime("%Y-%m-%d"),
-        "strategy_id": (strategy or {}).get("id", strat_name),
-        "risk_notes": [
-            f"{cycle_info['emoji']} {sector_label}｜{cycle_info['phase']}（買進門檻 {params['min_total_score_for_buy']:.0f} 分 / {adj_str}）"
-        ],
+        "strategy_id": explicit_id or "auto",
+        "risk_notes": [],
     }
 
     try:
         fund = get_fundamental(stock_id)
+        px = get_price_history(stock_id, params["backtest_years"])
+        strat_name, sector_label, cycle_info = classify_stock_archetype(px, fund, explicit_id)
+        if not has_custom_params and explicit_id in ("", "default", "auto"):
+            strat_file = pathlib.Path("strategies") / f"{strat_name}.json"
+            if strat_file.exists():
+                strategy = json.loads(strat_file.read_text())
+                strategy["id"] = strat_name
+                params = merge_params(strategy)
+        result["strategy_id"] = (strategy or {}).get("id", strat_name)
+        adj = float(cycle_info.get("threshold_adj", 0.0)) if not has_custom_params else 0.0
+        params["min_total_score_for_buy"] = round(params["min_total_score_for_buy"] + adj, 1)
+        adj_str = f"{adj:+.0f}分" if adj != 0 else "維持"
+        result["risk_notes"].append(
+            f"{cycle_info['emoji']} {sector_label}｜{cycle_info['phase']}（買進門檻 {params['min_total_score_for_buy']:.0f} 分 / {adj_str}）"
+        )
         eps_vals = list(fund["eps"].values())
         roe_vals = list(fund["roe"].values())
         fund_pass = (
@@ -52,7 +55,6 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
             and min(roe_vals) > params["roe_threshold"]
         )
 
-        px = get_price_history(stock_id, params["backtest_years"])
         if len(px) < 100:
             result["action"] = "SKIP"
             result["risk_notes"].append("價格資料不足")
@@ -116,7 +118,30 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                     base_score -= 6.0
                     result["risk_notes"].append(f"5日線乖離+{bias_pct:.1f}%過熱(扣6分防追高)")
 
+        base_score = float(round(max(0.0, min(100.0, base_score)), 1))
+        v34_f = params.get("v34_factors")
+        v34_w = float(params.get("v34_weight", 0.0))
+        if v34_f and v34_w > 0:
+            try:
+                as_of = str(px.index[-1])[:10] if not isinstance(px.index[-1], int) else datetime.now().strftime("%Y-%m-%d")
+                f_ctx = build_context(stock_id, as_of, lookback_years=3, strict=False)
+                f_sc = compute_all_factors(f_ctx, list(v34_f.keys()), params)
+                valid = [(float(f_sc[k]) * 100.0, float(w)) for k, w in v34_f.items() if f_sc.get(k) is not None]
+                if valid:
+                    v34_score = sum(v * w for v, w in valid) / sum(w for _, w in valid)
+                    base_score = (1.0 - v34_w) * base_score + v34_w * v34_score
+                    result["v34_score"] = round(v34_score, 1)
+                    result["risk_notes"].append(f"V3.4多因子綜合分: {v34_score:.1f}")
+            except Exception as e:
+                result["risk_notes"].append(f"V3.4因子略過({type(e).__name__})")
+        max_b = float(params.get("max_ma5_bias_pct", 0.0))
+        if max_b > 0 and len(px) >= 5:
+            ma5 = float(px["close"].tail(5).mean())
+            if ma5 > 0 and (bias := (float(px["close"].iloc[-1]) / ma5 - 1.0) * 100.0) > max_b:
+                base_score -= 6.0
+                result["risk_notes"].append(f"5日線乖離+{bias:.1f}%過熱(扣6分防追高)")
         signal_score = round(max(0.0, min(100.0, base_score)), 1)
+        result["effective_buy_threshold"] = float(params["min_total_score_for_buy"])
         result["effective_buy_threshold"] = float(params["min_total_score_for_buy"])
 
         fund_gate = (not params["fundamental_pass_required"]) or fund_pass
