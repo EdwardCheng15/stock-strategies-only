@@ -108,6 +108,14 @@ def main():
     if downgraded:
         print(f"⚠️ 大盤跌破月線，{downgraded} 檔 BUY 已自動降為 WATCH")
 
+    # 4d. 處置股濾網
+    try:
+        from stock_strategies.disposition import get_disposition_stocks, apply_disposition_filter
+        d_down = apply_disposition_filter(results, get_disposition_stocks())
+        if d_down: print(f"🚨 處置股降級: {d_down} 檔")
+    except Exception as e:
+        print(f"⚠️ 處置股略過: {e}")
+
     # 4b. 套用夜盤情緒濾鏡：昨晚夜盤大跌時 BUY 進一步降為 WATCH
     night_downgraded = apply_night_filter(results, night)
     if night_downgraded:

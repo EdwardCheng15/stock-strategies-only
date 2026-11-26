@@ -9,6 +9,15 @@ POSITIONS_FILE = pathlib.Path("positions.json")
 
 
 def load_positions(path: pathlib.Path = POSITIONS_FILE) -> list[dict[str, Any]]:
+    try:
+        from .sheet import get_gsheet
+        ws = get_gsheet().worksheet("Positions")
+        rows = [r for r in ws.get_all_records() if str(r.get("stock_id", "")).strip()]
+        if rows:
+            path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+            return rows
+    except Exception:
+        pass
     if not path.exists():
         return []
     try:
@@ -20,6 +29,20 @@ def load_positions(path: pathlib.Path = POSITIONS_FILE) -> list[dict[str, Any]]:
 
 def save_positions(positions: list[dict[str, Any]], path: pathlib.Path = POSITIONS_FILE) -> None:
     path.write_text(json.dumps(positions, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        import gspread
+        from .sheet import get_gsheet
+        sh = get_gsheet()
+        try:
+            ws = sh.worksheet("Positions")
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title="Positions", rows=100, cols=8)
+        headers = ["stock_id", "name", "shares", "avg_cost", "archetype", "peak_price"]
+        rows = [headers] + [[p.get(h, "") for h in headers] for p in positions]
+        ws.clear()
+        ws.update(values=rows, range_name="A1")
+    except Exception as e:
+        print(f"⚠️ Positions 雲端同步略過: {e}")
 
 
 def check_holding_health(
