@@ -311,7 +311,7 @@ def _format_deep_analysis(signals: list[dict], today: str) -> str:
     if interesting_watches:
         lines.append(f"🟡 *WATCH 量價解讀 ({len(interesting_watches)})*")
         lines.append("")
-        for s in interesting_(watches[:8] + [w for w in watches[8:] if '[全市場突圍]' in str(w.get('name', ''))]):
+        for s in (watches[:8] + [w for w in watches[8:] if '[全市場突圍]' in str(w.get('name', ''))]):
             lines.extend(_format_volume_block(s))
             lines.append("")
 

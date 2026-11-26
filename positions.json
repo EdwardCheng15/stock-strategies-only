@@ -1,53 +1,5 @@
 [
   {
-    "stock_id": 50,
-    "name": "元大台灣50",
-    "shares": 1012,
-    "avg_cost": 75.07,
-    "archetype": "archetype_etf",
-    "peak_price": 92.85
-  },
-  {
-    "stock_id": 56,
-    "name": "元大高股息",
-    "shares": 389,
-    "avg_cost": 44.43,
-    "archetype": "archetype_turnaround",
-    "peak_price": 47.49
-  },
-  {
-    "stock_id": 919,
-    "name": "群益台灣精選高息",
-    "shares": 80,
-    "avg_cost": 31.95,
-    "archetype": "archetype_turnaround",
-    "peak_price": 31.95
-  },
-  {
-    "stock_id": 2330,
-    "name": "台積電",
-    "shares": 1,
-    "avg_cost": 2149,
-    "archetype": "archetype_growth",
-    "peak_price": 2150
-  },
-  {
-    "stock_id": 2834,
-    "name": "臺企銀",
-    "shares": 1014,
-    "avg_cost": 12.93,
-    "archetype": "archetype_turnaround",
-    "peak_price": 16.5
-  },
-  {
-    "stock_id": 2885,
-    "name": "元大金",
-    "shares": 57,
-    "avg_cost": 55.07,
-    "archetype": "archetype_growth",
-    "peak_price": 63.8
-  },
-  {
     "stock_id": "1529",
     "name": "樂事綠能",
     "shares": 472,
@@ -94,6 +46,14 @@
     "avg_cost": 260.37,
     "archetype": "archetype_growth",
     "peak_price": 260.37
+  },
+  {
+    "stock_id": 50,
+    "name": "元大台灣50",
+    "shares": 1012,
+    "avg_cost": 75.07,
+    "archetype": "archetype_etf",
+    "peak_price": 92.85
   },
   {
     "stock_id": "0050",
