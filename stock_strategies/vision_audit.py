@@ -4,7 +4,7 @@ from .data import get_fundamental, get_price_history
 from .sector_router import classify_stock_archetype
 from .portfolio_guard import check_holding_health, load_positions, save_positions
 
-ARCH_SL = {"archetype_growth": 0.08, "archetype_turnaround": 0.07, "archetype_value": 0.05}
+ARCH_SL = {"archetype_growth": 0.08, "archetype_turnaround": 0.07, "archetype_value": 0.05, "archetype_etf": 0.12}
 OWNER_TOKENS = ("戴淯澤", "0323967")
 PROMPT = "解析台灣證券截圖，只回傳純JSON物件：{\"account_header\":\"上方帳號或戶名(無則空字串)\",\"positions\":[{\"stock_id\":\"代號\",\"name\":\"名稱\",\"shares\":整數股數,\"avg_cost\":成本價}]}。1張=1000股，無股數填0。"
 
@@ -33,23 +33,36 @@ def parse_broker_screenshot(image_path: str | pathlib.Path) -> tuple[str, list[d
 def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_note: str = "") -> str:
     if not positions: return "📭 未解析到有效持倉。"
     old_map = {str(p.get("stock_id", "")).strip(): p for p in load_positions()}
+    cap = float(os.environ.get("TOTAL_CAPITAL", "200000") or 200000)
     lines = [f"🩺 *持倉移動停利健檢報告*\n{'✅ 已同步雲端庫存 (Upsert)' if save else '👀 純健檢模式（未異動庫存）'}"]
     if header_note: lines.append(header_note)
-    merged = dict(old_map)
+    merged, items_val, total_val = dict(old_map), [], 0.0
     for pos in positions:
         sid, name, cost, shares = str(pos["stock_id"]).strip(), pos.get("name", ""), float(pos["avg_cost"]), int(pos.get("shares", 0))
         try:
-            px, fund = get_price_history(sid, years=1), get_fundamental(sid)
+            px = get_price_history(sid, years=1)
             cs = px["close"].astype(float)
-            c_px, ma10, ma20 = float(cs.iloc[-1]), float(cs.tail(10).mean()), float(cs.tail(20).mean())
-            st, lbl, _ = classify_stock_archetype(px, fund)
+            c_px, ma10, ma20, ma60 = float(cs.iloc[-1]), float(cs.tail(10).mean()), float(cs.tail(20).mean()), float(cs.tail(60).mean())
+            is_etf = sid.startswith("00")
+            if is_etf:
+                st, lbl = "archetype_etf", "指數ETF配置 (季線/12%寬幅防護)"
+            else:
+                st, lbl, _ = classify_stock_archetype(px, get_fundamental(sid))
             peak = max(float(old_map.get(sid, {}).get("peak_price", 0) or 0), cost, c_px)
             upd = {**pos, "archetype": st, "peak_price": round(peak, 2)}
             merged[sid] = upd
-            h = check_holding_health(upd, c_px, ma10, ma20, sl_pct=ARCH_SL.get(st, 0.08))
-            lines.append(f"• *{sid} {name}* ({'f{shares:,}股 | ' if shares > 0 else ''}成本 {cost:.2f} → 現價 {c_px:.2f} | {h['pnl_pct']:+.1f}%)\n  基因：{lbl}\n  {h['advice']}")
+            h = check_holding_health(upd, c_px, ma20 if is_etf else ma10, ma60 if is_etf else ma20, sl_pct=ARCH_SL.get(st, 0.08))
+            mv = c_px * shares if shares > 0 else 0.0
+            total_val += mv
+            items_val.append((sid, name, is_etf, mv))
+            lines.append(f"• *{sid} {name}* ({'f{shares:,}股 | ' if shares > 0 else ''}成本 {cost:.2f} → 現價 {c_px:.2f} | {h['pnl_pct']:+.1f}%)\n  基因：{lbl}（波段高 {peak:.2f}）\n  {h['advice']}")
         except Exception as e:
             lines.append(f"• *{sid} {name}*：⚠️ 健檢失敗 ({e})")
+    if total_val > 0 and cap > 0:
+        expo_pct = total_val / cap * 100
+        conc = [f"{s}({v/total_val*100:.0f}%)" for s, _, etf, v in items_val if not etf and v / total_val > 0.25]
+        lines.append(f"\n💰 *資金水位*：現值 ${total_val:,.0f} / 總資金 ${cap:,.0f}（水位 *{expo_pct:.1f}%*，上限 70% 剩餘 ${max(0, cap*0.7-total_val):,.0f}）")
+        if conc: lines.append(f"⚠️ *單一個股集中度過高(>25%)*：{", ".join(conc)}")
     if save: save_positions(list(merged.values()))
     return "\n".join(lines)
 
