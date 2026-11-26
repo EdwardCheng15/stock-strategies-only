@@ -60,7 +60,7 @@ def _format_stock_detail(s: dict, show_trend: bool = True) -> list[str]:
         f"目標 {s['target_price']} (+{s.get('take_profit_pct', CONFIG['target_return']*100):.0f}%)"
     )
     lines.append(
-        f"風報比 1:{s['risk_reward_ratio']} | 建議部位 {s['position_size_pct']}%"
+        f"風報比 1:{s['risk_reward_ratio']} | 建議部位 {s.get('allocated_size_pct', s['position_size_pct'])}%"
     )
     lines.append(
         f"基本面{fund} | 技術分 {c.get('tech_score', 'N/A')} | 勝率 {wr} ({c.get('backtest_samples', 0)}次)"

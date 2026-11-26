@@ -116,6 +116,16 @@ def main():
     order = {"BUY": 0, "WATCH": 1, "SKIP": 2, "ERROR": 3}
     results.sort(key=lambda x: (order.get(x.get("action"), 4), -x.get("signal_score", 0)))
 
+    # 4c. 組合集中度與總曝險控管（大盤站穩月線上限 70%，跌破月線自動降至 40%）
+    try:
+        from stock_strategies.portfolio_guard import load_positions, allocate_buy_signals
+        cur_pos = load_positions()
+        max_exp = 70.0 if market.get("above_ma20", True) else 40.0
+        buys = [r for r in results if r.get("action") == "BUY"]
+        allocate_buy_signals(buys, cur_pos, max_total_exposure_pct=max_exp)
+    except Exception as e:
+        print(f"⚠️ 組合資金分配略過: {e}", file=sys.stderr)
+
     buy_count = sum(1 for r in results if r["action"] == "BUY")
     watch_count = sum(1 for r in results if r["action"] == "WATCH")
     print(f"\n{buy_count} BUY, {watch_count} WATCH")
@@ -158,6 +168,17 @@ def main():
         send_telegram(breakout_msg)
     except Exception as e:
         print(f"⚠️ 全市場突圍掃描失敗: {e}", file=sys.stderr)
+
+    # 7c. 既有持倉移動停利與均線健檢推播（若有 positions.json）
+    try:
+        from stock_strategies.portfolio_guard import load_positions
+        from stock_strategies.vision_audit import audit_positions
+        cur_pos = load_positions()
+        if cur_pos:
+            print("執行既有持倉移動停利健檢...")
+            send_telegram(audit_positions(cur_pos, save=True))
+    except Exception as e:
+        print(f"⚠️ 持倉健檢推播失敗: {e}", file=sys.stderr)
 
     # 8. 若有累積的成績單，額外推一則摘要
     if stats and stats["count"] >= 5:
