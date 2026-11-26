@@ -71,3 +71,24 @@ def audit_from_screenshot(image_path: str | pathlib.Path, want_sync: bool = Fals
     if want_sync and not any(t in header for t in OWNER_TOKENS):
         return audit_positions(positions, save=False, header_note=f"⚠️ 帳戶「{header or '未識別'}」非本人，已轉為純健檢模式。")
     return audit_positions(positions, save=want_sync, header_note=(f"🔐 帳戶驗證通過：{header}" if want_sync and header else ""))
+
+def reduce_positions(tokens: list[str]) -> str:
+    cur = load_positions()
+    pos_map = {str(p.get("stock_id", "")).strip(): dict(p) for p in cur}
+    logs, i = [], 0
+    while i < len(tokens):
+        sid = tokens[i].strip()
+        qty = int(tokens[i + 1]) if (i + 1 < len(tokens) and tokens[i + 1].isdigit()) else None
+        i += 2 if qty is not None else 1
+        if sid not in pos_map:
+            logs.append(f"⚠️ 找不到 {sid}")
+            continue
+        old_sh = int(pos_map[sid].get("shares", 0))
+        if qty is None or old_sh - qty <= 0:
+            del pos_map[sid]
+            logs.append(f"🗑️ {sid} 已全數清倉移除")
+        else:
+            pos_map[sid]["shares"] = old_sh - qty
+            logs.append(f"📉 {sid} 減碼 {qty:,} 股（剩餘 {old_sh - qty:,} 股）")
+    save_positions(list(pos_map.values()))
+    return "\n".join(logs or ["用法：/sold 代號 [股數]，例如 /sold 0050 500"]) + f"\n📦 目前庫存共 {len(pos_map)} 檔"
