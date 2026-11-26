@@ -20,6 +20,15 @@ jobs:
       - name: Install deps
         run: uv sync
 
+      # FinMind parquet 快取跨次執行保留，避免每次全量重抓撞 API 額度
+      - name: Restore FinMind cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/finmind
+          key: finmind-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            finmind-${{ runner.os }}-
+
       - name: Run signal engine
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
@@ -27,5 +36,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          # 庫存以 Google Sheets「Positions」分頁為準（CI 上沒有本機 positions.json）
+          TOTAL_CAPITAL: ${{ secrets.TOTAL_CAPITAL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: uv run python main.py
 

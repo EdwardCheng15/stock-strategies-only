@@ -74,10 +74,7 @@ def main():
     watch_codes = {str(w["stock_id"]).strip() for w in watchlist}
     dynamic_pool = []
     try:
-        from stock_strategies.market_scanner import scan_market_breakouts
-        cands = scan_market_breakouts(top_n=20)
-        if not cands:
-            cands = scan_dynamic_candidates(min_volume=1500, min_pct=2.0, max_pct=8.5, top_n=20)
+        cands = scan_dynamic_candidates(min_volume=1500, min_pct=2.0, max_pct=8.5, top_n=20)
         for c in cands:
             code_str = str(c.get("code", "")).strip()
             if code_str and code_str not in watch_codes and len(dynamic_pool) < 15:
@@ -130,7 +127,8 @@ def main():
         cur_pos = load_positions()
         max_exp = 70.0 if market.get("above_ma20", True) else 40.0
         buys = [r for r in results if r.get("action") == "BUY"]
-        allocate_buy_signals(buys, cur_pos, max_total_exposure_pct=max_exp)
+        total_cap = float(os.environ.get("TOTAL_CAPITAL", "200000") or 200000)
+        allocate_buy_signals(buys, cur_pos, total_capital=total_cap, max_total_exposure_pct=max_exp)
     except Exception as e:
         print(f"⚠️ 組合資金分配略過: {e}", file=sys.stderr)
 
@@ -191,6 +189,15 @@ def main():
     # 8. 若有累積的成績單，額外推一則摘要
     if stats and stats["count"] >= 5:
         send_telegram(_format_perf_message(stats))
+
+    # 9. 清理超過 90 天（一季）未更新的冷門快取檔
+    try:
+        from stock_strategies.cache import prune_stale_cache
+        pruned = prune_stale_cache(max_age_days=90)
+        if pruned:
+            print(f"🧹 已清理 {pruned} 個超過 90 天未更新的快取檔")
+    except Exception as e:
+        print(f"⚠️ 快取清理略過: {e}", file=sys.stderr)
 
     print("✅ 完成")
 

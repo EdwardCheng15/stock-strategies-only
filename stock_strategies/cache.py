@@ -43,6 +43,27 @@ def _meta_path(dataset: str, data_id: str) -> Path:
     return cache_path(dataset, data_id).with_suffix(".meta.json")
 
 
+def prune_stale_cache(max_age_days: int = 90) -> int:
+    """刪除超過 max_age_days 未更新（以檔案修改時間判斷）的 parquet 與其 sidecar meta。
+    回傳刪除的 parquet 數。用於清掉不再追蹤的冷門標的，避免快取無限膨脹。"""
+    root = _cache_dir()
+    if not root.exists():
+        return 0
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    for p in root.glob("*.parquet"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                meta = p.with_suffix(".meta.json")
+                if meta.exists():
+                    meta.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def clear_cache(dataset: str | None = None, data_id: str | None = None) -> int:
     """刪除符合條件的快取檔（含 sidecar meta），回傳刪除的 parquet 數。"""
     root = _cache_dir()
