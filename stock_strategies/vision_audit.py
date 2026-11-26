@@ -2,21 +2,14 @@ import base64, json, os, pathlib, urllib.request
 from typing import Any
 from .data import get_fundamental, get_price_history
 from .sector_router import classify_stock_archetype
-from .portfolio_guard import check_holding_health, save_positions
+from .portfolio_guard import check_holding_health, load_positions, save_positions
 
 ARCH_SL = {"archetype_growth": 0.08, "archetype_turnaround": 0.07, "archetype_value": 0.05}
+OWNER_TOKENS = ("戴淯澤", "0323967")
+PROMPT = "解析台灣證券截圖，只回傳純JSON物件：{\"account_header\":\"上方帳號或戶名(無則空字串)\",\"positions\":[{\"stock_id\":\"代號\",\"name\":\"名稱\",\"shares\":整數股數,\"avg_cost\":成本價}]}。1張=1000股，無股數填0。"
 
-PROMPT = (
-    "請解析這張台灣證券 App 庫存或持倉損益截圖，萃取出所有股票或 ETF 持倉。"
-    "只回傳純 JSON 陣列（不要 Markdown 標記），每個元素格式為："
-    "{\"stock_id\": \"代號(如0050或2330)\", \"name\": \"名稱\", \"shares\": 整數股數, \"avg_cost\": 浮點數平均成本價}。"
-    "若顯示張數請換算為股數（1張=1000股）。"
-)
-
-def parse_broker_screenshot(image_path: str | pathlib.Path) -> list[dict[str, Any]]:
+def parse_broker_screenshot(image_path: str | pathlib.Path) -> tuple[str, list[dict[str, Any]]]:
     key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("未設定 GEMINI_API_KEY")
     img_path = pathlib.Path(image_path)
     mime = "image/png" if img_path.suffix.lower() == ".png" else "image/jpeg"
     b64_img = base64.b64encode(img_path.read_bytes()).decode("utf-8")
@@ -27,49 +20,41 @@ def parse_broker_screenshot(image_path: str | pathlib.Path) -> list[dict[str, An
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            if raw_text:
+                raw_text = json.loads(resp.read().decode("utf-8"))["candidates"][0]["content"]["parts"][0]["text"].strip()
                 break
         except Exception as e:
             last_err = f"{m}: {e}"
-    if not raw_text:
-        raise RuntimeError(f"Gemini Vision 失敗 ({last_err})")
-    raw_text = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    items = json.loads(raw_text)
-    return [
-        {"stock_id": str(it["stock_id"]).strip(), "name": str(it.get("name", "")).strip(),
-         "shares": int(float(it.get("shares", 0))), "avg_cost": float(it.get("avg_cost", 0.0))}
-        for it in items if str(it.get("stock_id", "")).strip() and float(it.get("avg_cost", 0)) > 0
-    ]
+    if not raw_text: raise RuntimeError(f"Vision失敗: {last_err}")
+    parsed = json.loads(raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip())
+    items = parsed.get("positions", parsed) if isinstance(parsed, dict) else parsed
+    cleaned = [{"stock_id": str(i["stock_id"]).strip(), "name": str(i.get("name", "")).strip(), "shares": int(float(i.get("shares", 0))), "avg_cost": float(i.get("avg_cost", 0))} for i in items if str(i.get("stock_id", "")).strip() and float(i.get("avg_cost", 0)) > 0]
+    return (str(parsed.get("account_header", "")).strip() if isinstance(parsed, dict) else ""), cleaned
 
-def audit_positions(positions: list[dict[str, Any]], save: bool = True) -> str:
-    if not positions:
-        return "📭 目前沒有任何持倉紀錄。"
-    lines = ["🩺 *持倉移動停利健檢報告*"]
-    enriched = []
+def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_note: str = "") -> str:
+    if not positions: return "📭 未解析到有效持倉。"
+    old_map = {str(p.get("stock_id", "")).strip(): p for p in load_positions()}
+    lines = [f"🩺 *持倉移動停利健檢報告*\n{'✅ 已同步雲端庫存 (Upsert)' if save else '👀 純健檢模式（未異動庫存）'}"]
+    if header_note: lines.append(header_note)
+    merged = dict(old_map)
     for pos in positions:
-        sid, name = str(pos["stock_id"]).strip(), pos.get("name", "")
-        cost, shares = float(pos["avg_cost"]), int(pos.get("shares", 0))
+        sid, name, cost, shares = str(pos["stock_id"]).strip(), pos.get("name", ""), float(pos["avg_cost"]), int(pos.get("shares", 0))
         try:
-            px = get_price_history(sid, years=1)
-            fund = get_fundamental(sid)
-            close_s = px["close"].astype(float)
-            close_px, ma10, ma20 = float(close_s.iloc[-1]), float(close_s.tail(10).mean()), float(close_s.tail(20).mean())
-            strat_name, arch_label, _ = classify_stock_archetype(px, fund)
-            sl_pct = ARCH_SL.get(strat_name, 0.08)
-            peak_px = max(float(pos.get("peak_price", cost) or cost), close_px)
-            pos_upd = {**pos, "archetype": strat_name, "peak_price": round(peak_px, 2)}
-            enriched.append(pos_upd)
-            h = check_holding_health(pos_upd, close_px, ma10, ma20, sl_pct=sl_pct)
-            lines.append(f"• *{sid} {name}* ({shares:,}股 | 成本 {cost:.2f} → 現價 {close_px:.2f} | {h["pnl_pct"]:+.1f}%)")
-            lines.append(f"  基因：{arch_label}\n  {h["advice"]}")
+            px, fund = get_price_history(sid, years=1), get_fundamental(sid)
+            cs = px["close"].astype(float)
+            c_px, ma10, ma20 = float(cs.iloc[-1]), float(cs.tail(10).mean()), float(cs.tail(20).mean())
+            st, lbl, _ = classify_stock_archetype(px, fund)
+            peak = max(float(old_map.get(sid, {}).get("peak_price", 0) or 0), cost, c_px)
+            upd = {**pos, "archetype": st, "peak_price": round(peak, 2)}
+            merged[sid] = upd
+            h = check_holding_health(upd, c_px, ma10, ma20, sl_pct=ARCH_SL.get(st, 0.08))
+            lines.append(f"• *{sid} {name}* ({'f{shares:,}股 | ' if shares > 0 else ''}成本 {cost:.2f} → 現價 {c_px:.2f} | {h['pnl_pct']:+.1f}%)\n  基因：{lbl}\n  {h['advice']}")
         except Exception as e:
-            enriched.append(pos)
             lines.append(f"• *{sid} {name}*：⚠️ 健檢失敗 ({e})")
-    if save:
-        save_positions(enriched)
+    if save: save_positions(list(merged.values()))
     return "\n".join(lines)
 
-def audit_from_screenshot(image_path: str | pathlib.Path) -> str:
-    return audit_positions(parse_broker_screenshot(image_path), save=True)
+def audit_from_screenshot(image_path: str | pathlib.Path, want_sync: bool = False) -> str:
+    header, positions = parse_broker_screenshot(image_path)
+    if want_sync and not any(t in header for t in OWNER_TOKENS):
+        return audit_positions(positions, save=False, header_note=f"⚠️ 帳戶「{header or '未識別'}」非本人，已轉為純健檢模式。")
+    return audit_positions(positions, save=want_sync, header_note=(f"🔐 帳戶驗證通過：{header}" if want_sync and header else ""))
