@@ -87,33 +87,27 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
 
         # V3.4 多流派因子引擎整合（籌碼 / 營收加速度 / 突破 / 估值）
         v34_factors = params.get("v34_factors")
-        v34_weight = float(params.get("v34_weight", 0.0))
+        v34_weight = float(params.get("v34_weight", 0.0) or 0.0)
         if v34_factors and v34_weight > 0:
             try:
                 as_of_str = str(px.index[-1])[:10] if not isinstance(px.index[-1], int) else datetime.now().strftime("%Y-%m-%d")
                 f_ctx = build_context(stock_id, as_of_str, lookback_years=3, strict=False)
                 f_scores = compute_all_factors(f_ctx, list(v34_factors.keys()), params)
-                w_sum = 0.0
-                val_sum = 0.0
-                for fname, fw in v34_factors.items():
-                    fval = f_scores.get(fname)
-                    if fval is not None:
-                        val_sum += float(fval) * 100.0 * float(fw)
-                        w_sum += float(fw)
-                if w_sum > 0:
-                    v34_score = val_sum / w_sum
+                valid = [(float(f_scores[k]) * 100.0, float(w)) for k, w in v34_factors.items() if f_scores.get(k) is not None]
+                if valid and sum(w for _, w in valid) > 0:
+                    v34_score = sum(v * w for v, w in valid) / sum(w for _, w in valid)
                     base_score = (1.0 - v34_weight) * base_score + v34_weight * v34_score
                     result["v34_score"] = round(v34_score, 1)
                     result["risk_notes"].append(f"V3.4多因子綜合分: {v34_score:.1f}")
                     if strat_name == "archetype_turnaround":
-                        if float(f_sc.get("chips.inst_net_strength") or 0.5) < 0.45 and float(f_sc.get("revenue.mom_turn") or 0.5) < 0.50:
+                        if float(f_scores.get("chips.inst_net_strength") or 0.5) < 0.45 and float(f_scores.get("revenue.mom_turn") or 0.5) < 0.50:
                             base_score -= 8.0
                             result["risk_notes"].append("轉折缺乏法人與營收支撐(扣8分防假突破)")
             except Exception as v_err:
                 result["risk_notes"].append(f"V3.4因子略過({type(v_err).__name__})")
 
         # 防追高濾網：收盤價距離 5 日均線過大扣 6 分
-        max_bias = float(params.get("max_ma5_bias_pct", 0.0))
+        max_bias = float(params.get("max_ma5_bias_pct", 0.0) or 0.0)
         if max_bias > 0 and len(px) >= 5:
             ma5 = float(px["close"].tail(5).mean())
             if ma5 > 0:
@@ -122,30 +116,7 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                     base_score -= 6.0
                     result["risk_notes"].append(f"5日線乖離+{bias_pct:.1f}%過熱(扣6分防追高)")
 
-        base_score = float(round(max(0.0, min(100.0, base_score)), 1))
-        v34_f = params.get("v34_factors")
-        v34_w = float(params.get("v34_weight", 0.0))
-        if v34_f and v34_w > 0:
-            try:
-                as_of = str(px.index[-1])[:10] if not isinstance(px.index[-1], int) else datetime.now().strftime("%Y-%m-%d")
-                f_ctx = build_context(stock_id, as_of, lookback_years=3, strict=False)
-                f_sc = compute_all_factors(f_ctx, list(v34_f.keys()), params)
-                valid = [(float(f_sc[k]) * 100.0, float(w)) for k, w in v34_f.items() if f_sc.get(k) is not None]
-                if valid:
-                    v34_score = sum(v * w for v, w in valid) / sum(w for _, w in valid)
-                    base_score = (1.0 - v34_w) * base_score + v34_w * v34_score
-                    result["v34_score"] = round(v34_score, 1)
-                    result["risk_notes"].append(f"V3.4多因子綜合分: {v34_score:.1f}")
-            except Exception as e:
-                result["risk_notes"].append(f"V3.4因子略過({type(e).__name__})")
-        max_b = float(params.get("max_ma5_bias_pct", 0.0))
-        if max_b > 0 and len(px) >= 5:
-            ma5 = float(px["close"].tail(5).mean())
-            if ma5 > 0 and (bias := (float(px["close"].iloc[-1]) / ma5 - 1.0) * 100.0) > max_b:
-                base_score -= 6.0
-                result["risk_notes"].append(f"5日線乖離+{bias:.1f}%過熱(扣6分防追高)")
         signal_score = round(max(0.0, min(100.0, base_score)), 1)
-        result["effective_buy_threshold"] = float(params["min_total_score_for_buy"])
         result["effective_buy_threshold"] = float(params["min_total_score_for_buy"])
 
         fund_gate = (not params["fundamental_pass_required"]) or fund_pass
@@ -160,11 +131,40 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
         else:
             action = "SKIP"
 
+        # V3.4 BUY 放行濾網：分數過關後，再檢查勝率可信度與短線追高
+        chg_5d = (latest["close"] / px.iloc[-6]["close"] - 1) * 100 if len(px) >= 6 else 0
+        if action == "BUY":
+            min_wr = float(params.get("min_backtest_winrate", 0.52))
+            min_n = int(params.get("min_backtest_samples", 20))
+            max_chg5 = float(params.get("max_chg_5d_pct", 15.0))
+            n_samples = int(bt.get("samples", 0) or 0)
+            if winrate is None or n_samples < min_n:
+                action = "WATCH"
+                result["risk_notes"].append(f"回測僅 {n_samples} 筆（需 ≥{min_n}），勝率不足採信，BUY→WATCH")
+            elif winrate < min_wr:
+                action = "WATCH"
+                result["risk_notes"].append(f"歷史勝率 {winrate*100:.0f}% < {min_wr*100:.0f}%，BUY→WATCH")
+            if action == "BUY" and max_chg5 > 0 and chg_5d > max_chg5:
+                action = "WATCH"
+                result["risk_notes"].append(f"5日漲幅 +{chg_5d:.1f}% > {max_chg5:.0f}%，防隔日追高，BUY→WATCH")
+
         entry = float(latest["close"])
         stop_price = round(entry * (1 - params["stop_loss"]), 2)
         target_price = round(entry * (1 + params["target_return"]), 2)
         rr = round(params["target_return"] / params["stop_loss"], 2)
         position_pct = min(2.0 / (params["stop_loss"] * 100) * 100, 20.0)
+        # 波動率倉位縮放：近 20 日年化波動超過目標值時，部位按比例縮小（最低縮到 1/4）
+        ann_vol = None
+        target_vol = float(params.get("target_annual_vol", 0.35) or 0.0)
+        rets = px["close"].astype(float).pct_change().dropna().tail(20)
+        if target_vol > 0 and len(rets) >= 10:
+            ann_vol = float(rets.std() * (252 ** 0.5))
+            if ann_vol > target_vol:
+                scale = max(0.25, target_vol / ann_vol)
+                result["risk_notes"].append(
+                    f"年化波動 {ann_vol*100:.0f}% > {target_vol*100:.0f}%，部位縮為 {scale*100:.0f}%（{position_pct:.1f}%→{position_pct*scale:.1f}%）"
+                )
+                position_pct *= scale
         entry_rule = (
             f"明日以開盤價進場，停損 -{params['stop_loss']*100:.0f}% / "
             f"停利 +{params['target_return']*100:.0f}%（下方參考價為今日收盤）"
@@ -181,7 +181,6 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
         if "放量滯漲" in vp["patterns"]:
             result["risk_notes"].append("偵測到放量滯漲，高檔爆量疑似出貨")
 
-        chg_5d = (latest["close"] / px.iloc[-6]["close"] - 1) * 100 if len(px) >= 6 else 0
         chg_20d = (latest["close"] / px.iloc[-21]["close"] - 1) * 100 if len(px) >= 21 else 0
         vol_5 = px["volume"].iloc[-5:].mean()
         vol_20 = px["volume"].iloc[-20:].mean()
@@ -221,6 +220,7 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
             "target_price": target_price,
             "risk_reward_ratio": rr,
             "position_size_pct": round(position_pct, 1),
+            "volatility_ann": round(ann_vol, 3) if ann_vol is not None else None,
             "entry_rule": entry_rule,
         })
         return result

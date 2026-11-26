@@ -59,6 +59,22 @@ _PARAM_DEFAULTS: dict = {
     "market_filter_ma_period": 20,
 }
 
+# 進階參數：策略 JSON 有寫就生效，沒寫就用預設（預設值等同關閉或 V3.4 濾網標準）。
+# 獨立於 _PARAM_DEFAULTS，因為 v34_factors 是 dict，不適用 validate_strategy 的純數值檢查。
+_EXTRA_PARAM_DEFAULTS: dict = {
+    # V3.4 多因子引擎
+    "v34_factors": None,          # {"因子名": 權重}
+    "v34_weight": 0.0,            # 多因子分數占總分比重（0 = 關閉）
+    # 防追高
+    "max_ma5_bias_pct": 0.0,      # 收盤距 5 日均線乖離上限 %（0 = 關閉）
+    "max_gap_up_pct": 0.0,        # 回測時隔日跳空開高上限（0 = 關閉）
+    # V3.4 BUY 放行濾網
+    "min_backtest_winrate": 0.52, # 歷史勝率下限
+    "min_backtest_samples": 20,   # 勝率需至少這麼多筆回測交易才採信
+    "max_chg_5d_pct": 15.0,       # 5 日漲幅上限 %（防隔日追高）
+    "target_annual_vol": 0.35,    # 波動率倉位：年化波動超過此值時按比例縮小建議部位
+}
+
 
 class StrategyError(ValueError):
     """策略驗證失敗"""
@@ -103,7 +119,7 @@ def _ensure_dir() -> None:
 
 def merge_params(strategy: Optional[dict]) -> dict:
     """把策略的 params 蓋在預設值上，回傳扁平 dict。"""
-    merged = dict(_PARAM_DEFAULTS)
+    merged = {**_PARAM_DEFAULTS, **_EXTRA_PARAM_DEFAULTS}
     if not strategy:
         return merged
     params = strategy.get("params") or {}
@@ -172,6 +188,22 @@ def validate_strategy(data: dict) -> dict:
             clean_params[key] = v
         else:
             clean_params[key] = default_val
+
+    for key in _EXTRA_PARAM_DEFAULTS:
+        v = raw_params.get(key)
+        if v is None:
+            continue
+        if key == "v34_factors":
+            if not isinstance(v, dict) or not all(
+                isinstance(fk, str) and isinstance(fw, (int, float)) and not isinstance(fw, bool) and math.isfinite(fw)
+                for fk, fw in v.items()
+            ):
+                raise StrategyError("v34_factors 必須是 {因子名: 數值權重}")
+            clean_params[key] = {fk: float(fw) for fk, fw in v.items()}
+        else:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                raise StrategyError(f"{key} 必須是有限數值")
+            clean_params[key] = v
 
     if sum(clean_params[k] for k in ("weight_fundamental", "weight_technical", "weight_backtest")) <= 0:
         raise StrategyError("評分權重總和必須大於 0")
