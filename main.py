@@ -70,16 +70,20 @@ def main():
     night_note = night_filter_note(night)
     print(f"  → {night_note}")
 
-    # 2c. 併入全市場動能突圍前 12 名進入正式評分池（排除既有 watchlist）
+    # 2c. 併入全市場動能突圍前 15 名（確保包含完整 TOP 5 榜單）進入正式評分池
     watch_codes = {str(w["stock_id"]).strip() for w in watchlist}
     dynamic_pool = []
     try:
-        cands = scan_dynamic_candidates(min_volume=2000, min_pct=2.5, max_pct=8.5, top_n=20)
+        from stock_strategies.market_scanner import scan_market_breakouts
+        cands = scan_market_breakouts(top_n=20)
+        if not cands:
+            cands = scan_dynamic_candidates(min_volume=1500, min_pct=2.0, max_pct=8.5, top_n=20)
         for c in cands:
-            if str(c["code"]) not in watch_codes and len(dynamic_pool) < 12:
+            code_str = str(c.get("code", "")).strip()
+            if code_str and code_str not in watch_codes and len(dynamic_pool) < 15:
                 dynamic_pool.append({
-                    "stock_id": str(c["code"]),
-                    "name": f"{c['name']}[全市場突圍]",
+                    "stock_id": code_str,
+                    "name": f"{c.get('name', '')}[全市場突圍]",
                     "strategy": "default",
                 })
         print(f"🔥 全市場動能候選池：額外納入 {len(dynamic_pool)} 檔強勢突圍股進入精算")

@@ -214,7 +214,7 @@ def format_messages(
         msg2.append("")
 
     if watches:
-        top_watches = watches[:8]
+        top_watches = (watches[:8] + [w for w in watches[8:] if '[全市場突圍]' in str(w.get('name', ''))])
         rest_watches = watches[8:]
         msg2.append(f"🟡 *WATCH — 接近訊號 TOP {len(top_watches)}*")
         msg2.append("")
@@ -311,7 +311,7 @@ def _format_deep_analysis(signals: list[dict], today: str) -> str:
     if interesting_watches:
         lines.append(f"🟡 *WATCH 量價解讀 ({len(interesting_watches)})*")
         lines.append("")
-        for s in interesting_watches[:8]:
+        for s in interesting_(watches[:8] + [w for w in watches[8:] if '[全市場突圍]' in str(w.get('name', ''))]):
             lines.extend(_format_volume_block(s))
             lines.append("")
 
