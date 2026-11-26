@@ -52,10 +52,13 @@ def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_
             upd = {**pos, "archetype": st, "peak_price": round(peak, 2)}
             merged[sid] = upd
             h = check_holding_health(upd, c_px, ma20 if is_etf else ma10, ma60 if is_etf else ma20, sl_pct=ARCH_SL.get(st, 0.08))
+            if h["pnl_pct"] <= -15.0:
+                low20 = float(cs.tail(20).min())
+                h["advice"] = f"🟡 深套反彈站上月線({ma20:.2f})，可分批減碼降成本" if c_px >= ma20 else f"🟣 歷史深套整理（月線反壓 {ma20:.2f}｜破20日低 {low20:.2f} 停損）"
             mv = c_px * shares if shares > 0 else 0.0
             total_val += mv
             items_val.append((sid, name, is_etf, mv))
-            lines.append(f"• *{sid} {name}* ({'f{shares:,}股 | ' if shares > 0 else ''}成本 {cost:.2f} → 現價 {c_px:.2f} | {h['pnl_pct']:+.1f}%)\n  基因：{lbl}（波段高 {peak:.2f}）\n  {h['advice']}")
+            lines.append(f"• *{sid} {name}* ({f'{shares:,}股 | ' if shares > 0 else ''}成本 {cost:.2f} → 現價 {c_px:.2f} | {h['pnl_pct']:+.1f}%)\n  基因：{lbl.replace('nan%', 'N/A')}（波段高 {peak:.2f}）\n  {h['advice']}")
         except Exception as e:
             lines.append(f"• *{sid} {name}*：⚠️ 健檢失敗 ({e})")
     if total_val > 0 and cap > 0:

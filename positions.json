@@ -1,14 +1,14 @@
 [
   {
-    "stock_id": "0050",
+    "stock_id": 50,
     "name": "元大台灣50",
-    "shares": 220,
-    "avg_cost": 102.98,
-    "archetype": "archetype_turnaround",
-    "peak_price": 102.98
+    "shares": 1012,
+    "avg_cost": 75.07,
+    "archetype": "archetype_etf",
+    "peak_price": 92.85
   },
   {
-    "stock_id": "0056",
+    "stock_id": 56,
     "name": "元大高股息",
     "shares": 389,
     "avg_cost": 44.43,
@@ -16,7 +16,7 @@
     "peak_price": 47.49
   },
   {
-    "stock_id": "00919",
+    "stock_id": 919,
     "name": "群益台灣精選高息",
     "shares": 80,
     "avg_cost": 31.95,
@@ -24,15 +24,15 @@
     "peak_price": 31.95
   },
   {
-    "stock_id": "2330",
+    "stock_id": 2330,
     "name": "台積電",
     "shares": 1,
-    "avg_cost": 2149.0,
+    "avg_cost": 2149,
     "archetype": "archetype_growth",
-    "peak_price": 2150.0
+    "peak_price": 2150
   },
   {
-    "stock_id": "2834",
+    "stock_id": 2834,
     "name": "臺企銀",
     "shares": 1014,
     "avg_cost": 12.93,
@@ -40,11 +40,67 @@
     "peak_price": 16.5
   },
   {
-    "stock_id": "2885",
+    "stock_id": 2885,
     "name": "元大金",
     "shares": 57,
     "avg_cost": 55.07,
     "archetype": "archetype_growth",
     "peak_price": 63.8
+  },
+  {
+    "stock_id": "1529",
+    "name": "樂事綠能",
+    "shares": 472,
+    "avg_cost": 27.31,
+    "archetype": "archetype_turnaround",
+    "peak_price": 27.31
+  },
+  {
+    "stock_id": "2337",
+    "name": "旺宏",
+    "shares": 57,
+    "avg_cost": 140.84,
+    "archetype": "archetype_turnaround",
+    "peak_price": 140.84
+  },
+  {
+    "stock_id": "3231",
+    "name": "緯創",
+    "shares": 35,
+    "avg_cost": 149.57,
+    "archetype": "archetype_growth",
+    "peak_price": 167.0
+  },
+  {
+    "stock_id": "3481",
+    "name": "群創",
+    "shares": 250,
+    "avg_cost": 53.98,
+    "archetype": "archetype_turnaround",
+    "peak_price": 53.98
+  },
+  {
+    "stock_id": "3491",
+    "name": "昇達科",
+    "shares": 10,
+    "avg_cost": 1762.5,
+    "archetype": "archetype_turnaround",
+    "peak_price": 1762.5
+  },
+  {
+    "stock_id": "2317",
+    "name": "鴻海",
+    "shares": 60,
+    "avg_cost": 260.37,
+    "archetype": "archetype_growth",
+    "peak_price": 260.37
+  },
+  {
+    "stock_id": "0050",
+    "name": "元大台灣50",
+    "shares": 1012,
+    "avg_cost": 75.07,
+    "archetype": "archetype_etf",
+    "peak_price": 92.85
   }
 ]
