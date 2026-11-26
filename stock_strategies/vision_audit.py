@@ -92,3 +92,39 @@ def reduce_positions(tokens: list[str]) -> str:
             logs.append(f"📉 {sid} 減碼 {qty:,} 股（剩餘 {old_sh - qty:,} 股）")
     save_positions(list(pos_map.values()))
     return "\n".join(logs or ["用法：/sold 代號 [股數]，例如 /sold 0050 500"]) + f"\n📦 目前庫存共 {len(pos_map)} 檔"
+
+def buy_positions(tokens: list[str]) -> str:
+    if len(tokens) < 3 or len(tokens) % 3 != 0:
+        return "用法：/buy 代號 股數 成交價（可多筆），例如：/buy 2330 100 1050"
+    cur = load_positions()
+    pos_map = {str(p.get("stock_id", "")).strip(): dict(p) for p in cur}
+    logs = []
+    for i in range(0, len(tokens), 3):
+        sid = tokens[i].strip()
+        try:
+            qty, px = int(float(tokens[i + 1])), float(tokens[i + 2])
+            if qty <= 0 or px <= 0: raise ValueError
+        except ValueError:
+            logs.append(f"⚠️ {sid} 參數格式錯誤（股數與價格須大於0）")
+            continue
+        if sid in pos_map:
+            old_sh = int(pos_map[sid].get("shares", 0))
+            old_cost = float(pos_map[sid].get("avg_cost", 0.0))
+            new_sh = old_sh + qty
+            new_cost = round(((old_sh * old_cost) + (qty * px)) / new_sh, 2)
+            peak = max(float(pos_map[sid].get("peak_price", 0) or 0), px)
+            pos_map[sid].update({"shares": new_sh, "avg_cost": new_cost, "peak_price": round(peak, 2)})
+            logs.append(f"📈 *{sid} {pos_map[sid].get('name', '')}* 加碼 {qty:,} 股 @ {px:.2f}\n  → 總股數 {new_sh:,} 股｜新均價 {new_cost:.2f}")
+        else:
+            name = ""
+            try:
+                fund = get_fundamental(sid)
+                if isinstance(fund, dict): name = str(fund.get("stock_name", "") or fund.get("name", "")).strip()
+            except Exception: pass
+            pos_map[sid] = {"stock_id": sid, "name": name, "shares": qty, "avg_cost": round(px, 2), "peak_price": round(px, 2)}
+            logs.append(f"🆕 *{sid} {name}* 建倉 {qty:,} 股 @ {px:.2f}")
+    save_positions(list(pos_map.values()))
+    cap = float(os.environ.get("TOTAL_CAPITAL", "200000") or 200000)
+    est_val = sum(int(p.get("shares", 0)) * float(p.get("peak_price") or p.get("avg_cost") or 0) for p in pos_map.values())
+    warn = f"\n⚠️ 估算總曝險 {est_val/cap*100:.1f}% 已超過 70% 上限！" if cap > 0 and est_val > cap * 0.7 else ""
+    return "\n".join(logs) + f"\n📦 目前庫存共 {len(pos_map)} 檔{warn}"

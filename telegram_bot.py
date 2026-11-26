@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, pathlib, tempfile, time, urllib.request
 from dotenv import load_dotenv
-from stock_strategies.vision_audit import audit_from_screenshot, audit_positions, reduce_positions
+from stock_strategies.vision_audit import audit_from_screenshot, audit_positions, reduce_positions, buy_positions
 from stock_strategies.portfolio_guard import load_positions
 
 load_dotenv()
@@ -50,6 +50,8 @@ def run_polling() -> None:
                         send_reply(chat_id, f"⚠️ 截圖解析失敗：{e}")
                     finally:
                         tmp_img.unlink(missing_ok=True)
+                elif txt.startswith("/buy"):
+                    send_reply(chat_id, buy_positions(txt.split()[1:]))
                 elif txt.startswith("/sold"):
                     send_reply(chat_id, reduce_positions(txt.split()[1:]))
                 elif txt.startswith("/audit"):
