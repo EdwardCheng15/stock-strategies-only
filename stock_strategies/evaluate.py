@@ -81,7 +81,43 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
         if wsum > 0:
             wf, wt, wb = wf / wsum, wt / wsum, wb / wsum
 
-        signal_score = round(wf * fund_score + wt * tech_score + wb * bt_score, 1)
+        base_score = wf * fund_score + wt * tech_score + wb * bt_score
+
+        # V3.4 多流派因子引擎整合（籌碼 / 營收加速度 / 突破 / 估值）
+        v34_factors = params.get("v34_factors")
+        v34_weight = float(params.get("v34_weight", 0.0))
+        if v34_factors and v34_weight > 0:
+            try:
+                as_of_str = str(px.index[-1])[:10] if not isinstance(px.index[-1], int) else datetime.now().strftime("%Y-%m-%d")
+                f_ctx = build_context(stock_id, as_of_str, lookback_years=3, strict=False)
+                f_scores = compute_all_factors(f_ctx, list(v34_factors.keys()), params)
+                w_sum = 0.0
+                val_sum = 0.0
+                for fname, fw in v34_factors.items():
+                    fval = f_scores.get(fname)
+                    if fval is not None:
+                        val_sum += float(fval) * 100.0 * float(fw)
+                        w_sum += float(fw)
+                if w_sum > 0:
+                    v34_score = val_sum / w_sum
+                    base_score = (1.0 - v34_weight) * base_score + v34_weight * v34_score
+                    result["v34_score"] = round(v34_score, 1)
+                    result["risk_notes"].append(f"V3.4多因子綜合分: {v34_score:.1f}")
+            except Exception as v_err:
+                result["risk_notes"].append(f"V3.4因子略過({type(v_err).__name__})")
+
+        # 防追高濾網：收盤價距離 5 日均線過大扣 6 分
+        max_bias = float(params.get("max_ma5_bias_pct", 0.0))
+        if max_bias > 0 and len(px) >= 5:
+            ma5 = float(px["close"].tail(5).mean())
+            if ma5 > 0:
+                bias_pct = (float(latest["close"]) / ma5 - 1.0) * 100.0
+                if bias_pct > max_bias:
+                    base_score -= 6.0
+                    result["risk_notes"].append(f"5日線乖離+{bias_pct:.1f}%過熱(扣6分防追高)")
+
+        signal_score = round(max(0.0, min(100.0, base_score)), 1)
+        result["effective_buy_threshold"] = float(params["min_total_score_for_buy"])
 
         fund_gate = (not params["fundamental_pass_required"]) or fund_pass
         if (

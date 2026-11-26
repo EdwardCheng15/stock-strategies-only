@@ -40,7 +40,7 @@ def apply_market_filter(results: list[dict], market: dict) -> int:
         if r.get("action") == "BUY":
             new_score = round(r.get("signal_score", 0) - 6.0, 1)
             r["signal_score"] = new_score
-            if new_score < 62.0:
+            if new_score < float(r.get('effective_buy_threshold', 62.0)):
                 r["action"] = "WATCH"
                 r.setdefault("risk_notes", []).append("大盤破月線扣6分，轉為 WATCH")
                 downgraded += 1

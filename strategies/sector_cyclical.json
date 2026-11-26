@@ -25,6 +25,17 @@
     "use_macd_bullish": true,
     "use_volume_patterns": true,
     "market_filter_enabled": true,
-    "market_filter_ma_period": 20
+    "market_filter_ma_period": 20,
+    "v34_weight": 0.45,
+    "max_ma5_bias_pct": 7.0,
+    "v34_factors": {
+      "breakout.swing_new_high": 0.2,
+      "breakout.box_break": 0.15,
+      "breakout.vol_confirm_break": 0.1,
+      "revenue.yoy_accel": 0.15,
+      "revenue.mom_turn": 0.15,
+      "chips.margin_retreat": 0.15,
+      "chips.inst_net_strength": 0.1
+    }
   }
 }
