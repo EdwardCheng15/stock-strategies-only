@@ -1,5 +1,9 @@
 """
-V3.2 每日選股訊號系統
+V3.2 每日選股訊號系統（兩段式推播第一段：盤後「明日候選清單」）
+
+兩段式：
+- 盤後（本檔）：評分 → 寫入 Signals 分頁 → 推精簡候選清單
+- 盤前（premarket.py）：依昨晚夜盤與美股確認 → 推今日最終清單 + 持倉健檢
 
 新增：
 - 回測以「訊號日隔天開盤價」為進場（符合真實可執行）
@@ -28,13 +32,8 @@ from stock_strategies.sheet import (
     write_performance,
 )
 from stock_strategies.evaluate import evaluate
-from stock_strategies.notify import send_telegram, format_messages
+from stock_strategies.notify import send_telegram, format_candidates
 from stock_strategies.market import get_market_state, apply_market_filter
-from stock_strategies.night_session import (
-    get_night_session,
-    apply_night_filter,
-    night_filter_note,
-)
 from stock_strategies.performance import update_performance, summary as perf_summary
 from stock_strategies.market_scanner import format_market_breakout_top5, scan_dynamic_candidates
 
@@ -63,12 +62,6 @@ def main():
     print("取得大盤狀態...")
     market = get_market_state()
     print(f"  → {market['note']}")
-
-    # 2b. 取得昨晚夜盤（情緒風控濾鏡）
-    print("取得昨晚夜盤...")
-    night = get_night_session()
-    night_note = night_filter_note(night)
-    print(f"  → {night_note}")
 
     # 2c. 併入全市場動能突圍前 15 名（確保包含完整 TOP 5 榜單）進入正式評分池
     watch_codes = {str(w["stock_id"]).strip() for w in watchlist}
@@ -113,10 +106,7 @@ def main():
     except Exception as e:
         print(f"⚠️ 處置股略過: {e}")
 
-    # 4b. 套用夜盤情緒濾鏡：昨晚夜盤大跌時 BUY 進一步降為 WATCH
-    night_downgraded = apply_night_filter(results, night)
-    if night_downgraded:
-        print(f"🌙 昨晚夜盤大跌，{night_downgraded} 檔 BUY 已自動降為 WATCH")
+    # （夜盤濾網移到隔天 08:00 盤前確認，改用「今晚」夜盤，見 premarket.py）
 
     order = {"BUY": 0, "WATCH": 1, "SKIP": 2, "ERROR": 3}
     results.sort(key=lambda x: (order.get(x.get("action"), 4), -x.get("signal_score", 0)))
@@ -125,7 +115,7 @@ def main():
     try:
         from stock_strategies.portfolio_guard import load_positions, allocate_buy_signals
         cur_pos = load_positions()
-        max_exp = 70.0 if market.get("above_ma20", True) else 40.0
+        max_exp = 70.0 if market.get("bullish", True) else 40.0
         buys = [r for r in results if r.get("action") == "BUY"]
         total_cap = float(os.environ.get("TOTAL_CAPITAL", "200000") or 200000)
         allocate_buy_signals(buys, cur_pos, total_capital=total_cap, max_total_exposure_pct=max_exp)
@@ -160,31 +150,28 @@ def main():
         print(f"⚠️ Performance 追蹤失敗: {e}", file=sys.stderr)
         stats = None
 
-    # 7. 發送 Telegram
-    print("發送 Telegram...")
-    for msg in format_messages(results, watchlist, market=market, night_note=night_note):
-        send_telegram(msg)
-        time.sleep(0.5)
+    # 7. 發送 Telegram：明日候選清單（含全市場突圍 TOP 5）
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    bar_dates = [r.get("bar_date") for r in results if r.get("bar_date")]
+    data_note = ""
+    if bar_dates:
+        latest_bar = max(bar_dates)
+        stale = sum(1 for d in bar_dates if d < today_str)
+        if latest_bar < today_str:
+            data_note = f"⚠️ 資料尚未更新到今天（最新 K 線 {latest_bar}），以下候選以 {latest_bar} 收盤計算"
+        elif stale:
+            data_note = f"⚠️ {stale}/{len(bar_dates)} 檔資料尚未更新到今天"
+        if data_note:
+            print(data_note)
 
-    # 7b. 雙軌並行：發送今日全市場突圍 TOP 5（自動排除既有觀察名單標的）
-    print("掃描全市場突圍 TOP 5...")
+    print("發送 Telegram：盤後候選清單...")
+    msg = format_candidates(results, market=market, data_note=data_note)
     try:
         watch_codes = {str(w["stock_id"]).strip() for w in watchlist}
-        breakout_msg = format_market_breakout_top5(exclude_codes=watch_codes, top_n=5)
-        send_telegram(breakout_msg)
+        msg += format_market_breakout_top5(exclude_codes=watch_codes, top_n=5)
     except Exception as e:
         print(f"⚠️ 全市場突圍掃描失敗: {e}", file=sys.stderr)
-
-    # 7c. 既有持倉移動停利與均線健檢推播（若有 positions.json）
-    try:
-        from stock_strategies.portfolio_guard import load_positions
-        from stock_strategies.vision_audit import audit_positions
-        cur_pos = load_positions()
-        if cur_pos:
-            print("執行既有持倉移動停利健檢...")
-            send_telegram(audit_positions(cur_pos, save=True))
-    except Exception as e:
-        print(f"⚠️ 持倉健檢推播失敗: {e}", file=sys.stderr)
+    send_telegram(msg)
 
     # 8. 若有累積的成績單，額外推一則摘要
     if stats and stats["count"] >= 5:

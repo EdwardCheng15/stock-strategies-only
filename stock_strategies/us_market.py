@@ -133,20 +133,22 @@ def _evaluate_risk_levels(stats: dict[str, dict]) -> tuple[dict[str, str], list[
     return levels, triggered_reasons, is_strong_warn
 
 
-def get_us_market_summary(signals: list[dict] | None = None, threshold: float = 2.0) -> str:
-    all_tickers = list(MARKET_INDICES.keys())
+def _all_tickers() -> list[str]:
+    tickers = list(MARKET_INDICES.keys())
     for g in SUPPLY_CHAIN_GROUPS:
-        all_tickers.extend(g["tickers"].keys())
-    all_tickers = list(dict.fromkeys(all_tickers))
+        tickers.extend(g["tickers"].keys())
+    return list(dict.fromkeys(tickers))
 
+
+def fetch_us_stats() -> tuple[dict[str, dict], str]:
+    """下載美股隔夜收盤，回傳 (stats, 錯誤訊息)。stats 為空代表抓取失敗。"""
+    all_tickers = _all_tickers()
     try:
         df = yf.download(all_tickers, period="25d", progress=False, auto_adjust=True)["Close"]
     except Exception as e:
-        return f"\n\n━━━━━━━━━━━━━━━━━━\n🇺🇸 美股連動快報\n⚠️ 美股資料抓取失敗: {e}"
-
+        return {}, f"美股資料抓取失敗: {e}"
     if df.empty or len(df) < 2:
-        return "\n\n━━━━━━━━━━━━━━━━━━\n🇺🇸 美股連動快報\n⚠️ 美股收盤資料不足"
-
+        return {}, "美股收盤資料不足"
     stats: dict[str, dict] = {}
     for t in all_tickers:
         if t not in df.columns:
@@ -156,13 +158,35 @@ def get_us_market_summary(signals: list[dict] | None = None, threshold: float = 
             continue
         last_close = float(series.iloc[-1])
         prev_close = float(series.iloc[-2])
-        pct = (last_close - prev_close) / prev_close * 100
         ma20 = float(series.tail(20).mean()) if len(series) >= 20 else last_close
         stats[t] = {
             "close": last_close,
-            "pct": pct,
+            "pct": (last_close - prev_close) / prev_close * 100,
             "above_ma20": last_close >= ma20,
         }
+    return stats, ""
+
+
+def get_us_risk(stats: dict[str, dict]) -> dict:
+    """盤前確認用的美股風險等級：level = strong_warn | warn | normal | unknown。"""
+    if not stats:
+        return {"level": "unknown", "reasons": []}
+    _, reasons, is_strong = _evaluate_risk_levels(stats)
+    level = "strong_warn" if is_strong else ("warn" if reasons else "normal")
+    return {"level": level, "reasons": reasons}
+
+
+def get_us_market_summary(
+    signals: list[dict] | None = None,
+    threshold: float = 2.0,
+    stats: dict[str, dict] | None = None,
+) -> str:
+    if stats is None:
+        stats, err = fetch_us_stats()
+        if not stats:
+            return f"\n\n━━━━━━━━━━━━━━━━━━\n🇺🇸 美股連動快報\n⚠️ {err}"
+    elif not stats:
+        return "\n\n━━━━━━━━━━━━━━━━━━\n🇺🇸 美股連動快報\n⚠️ 美股資料暫時取不到"
 
     levels, triggered_reasons, is_strong_warn = _evaluate_risk_levels(stats)
 
@@ -215,9 +239,11 @@ def get_us_market_summary(signals: list[dict] | None = None, threshold: float = 
     # 3. 昨日觀察池 BUY/WATCH 標記
     active_tw_codes = set()
     if signals:
-        latest_date = max((s.get("date", "") for s in signals if s.get("signal") in ("BUY", "WATCH")), default="")
+        def _act(x: dict) -> str:
+            return str(x.get("action") or x.get("signal") or "").upper()
+        latest_date = max((str(s.get("date", "")) for s in signals if _act(s) in ("BUY", "WATCH")), default="")
         for s in signals:
-            if s.get("date") == latest_date and s.get("signal") in ("BUY", "WATCH"):
+            if str(s.get("date")) == latest_date and _act(s) in ("BUY", "WATCH"):
                 code = str(s.get("code") or s.get("stock_id") or "").strip()
                 if code:
                     active_tw_codes.add(code)

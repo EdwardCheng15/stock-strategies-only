@@ -216,6 +216,7 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                 "above_ma60": bool(above_ma60),
             },
             "entry_price": entry,
+            "bar_date": str(px["date"].iloc[-1])[:10] if "date" in px.columns else "",
             "stop_loss_price": stop_price,
             "target_price": target_price,
             "risk_reward_ratio": rr,

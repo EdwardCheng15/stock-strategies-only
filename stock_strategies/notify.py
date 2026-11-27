@@ -8,16 +8,46 @@ import requests
 from .config import CONFIG, TELEGRAM_API
 
 
+TELEGRAM_MAX_LEN = 3900  # Telegram 單則上限 4096 字，保留緩衝
+
+
+def _split_message(text: str, limit: int = TELEGRAM_MAX_LEN) -> list[str]:
+    """依換行切段，確保每段不超過 Telegram 長度上限。"""
+    if len(text) <= limit:
+        return [text]
+    chunks, buf = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:  # 極長單行硬切
+            if buf:
+                chunks.append(buf)
+                buf = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if len(buf) + len(line) + 1 > limit:
+            chunks.append(buf)
+            buf = line
+        else:
+            buf = f"{buf}\n{line}" if buf else line
+    if buf:
+        chunks.append(buf)
+    return chunks
+
+
 def send_telegram(text: str):
+    """發送 Telegram 訊息：超長自動分段；Markdown 解析失敗（如股名含 _ *）時改純文字重送。"""
     url = TELEGRAM_API.format(token=os.environ["TELEGRAM_BOT_TOKEN"])
-    payload = {
-        "chat_id": os.environ["TELEGRAM_CHAT_ID"],
-        "text": text,
-        "parse_mode": "Markdown",
-    }
-    r = requests.post(url, json=payload, timeout=10)
-    if not r.ok:
-        print(f"Telegram 送失敗: {r.text}", file=sys.stderr)
+    for chunk in _split_message(text):
+        payload = {
+            "chat_id": os.environ["TELEGRAM_CHAT_ID"],
+            "text": chunk,
+            "parse_mode": "Markdown",
+        }
+        r = requests.post(url, json=payload, timeout=10)
+        if not r.ok and "parse" in r.text.lower():
+            payload.pop("parse_mode")
+            r = requests.post(url, json=payload, timeout=10)
+        if not r.ok:
+            print(f"Telegram 送失敗: {r.text}", file=sys.stderr)
 
 
 def _trend_emoji(chg: float) -> str:
@@ -425,3 +455,57 @@ def format_premarket(night: dict | None, signals: list[dict]) -> str:
 def format_message(signals: list[dict]) -> str:
     """向後相容"""
     return format_messages(signals)[0]
+
+
+def format_candidates(
+    signals: list[dict],
+    market: dict | None = None,
+    data_note: str = "",
+    watch_limit: int = 8,
+) -> str:
+    """盤後「明日候選清單」：精簡版，最終是否執行由隔天 08:00 盤前確認。"""
+    buys = [s for s in signals if s.get("action") == "BUY"]
+    watches = [s for s in signals if s.get("action") == "WATCH"]
+    errors = [s for s in signals if s.get("action") == "ERROR"]
+    today = datetime.now()
+    wd = "一二三四五六日"[today.weekday()]
+    lines = [
+        f"🌆 *盤後候選清單* {today.strftime('%Y/%m/%d')} (週{wd})",
+        f"掃描 {len(signals)} 檔 | BUY {len(buys)} | WATCH {len(watches)}"
+        + (f" | 失敗 {len(errors)}" if errors else ""),
+    ]
+    if data_note:
+        lines.append(data_note)
+    if market and market.get("note"):
+        lines.append(market["note"])
+    lines.append("")
+
+    if buys:
+        lines.append("🟢 *BUY 候選*（明早 08:00 依夜盤與美股確認）")
+        for s in buys:
+            c = s.get("components", {})
+            wr = f"{c['backtest_winrate']*100:.0f}%" if c.get("backtest_winrate") is not None else "N/A"
+            entry = float(s["entry_price"])
+            lines.append(
+                f"*{s['stock_id']} {s['name']}* {s['signal_score']}分｜勝率 {wr}({c.get('backtest_samples', 0)}筆)"
+            )
+            lines.append(
+                f"  收 {entry:.2f}｜追價上限 {entry*1.035:.2f}｜停損 {s['stop_loss_price']}｜"
+                f"目標 {s['target_price']}｜部位 {s.get('allocated_size_pct', s.get('position_size_pct'))}%"
+            )
+            notes = [n for n in s.get("risk_notes", []) if "→" in n or "調降" in n or "波動" in n]
+            if notes:
+                lines.append(f"  ⚠️ {' / '.join(notes)}")
+    else:
+        lines.append("🟢 今日無 BUY 候選")
+    lines.append("")
+
+    if watches:
+        lines.append(f"🟡 *WATCH 前 {min(watch_limit, len(watches))} 名*")
+        for s in watches[:watch_limit]:
+            why = next((n for n in s.get("risk_notes", []) if "→" in n), "")
+            lines.append(f"• {s['stock_id']} {s['name']} {s['signal_score']}分" + (f"｜{why}" if why else ""))
+        lines.append("")
+
+    lines.append("💡 _這是候選，不是最終清單；明早 08:00 盤前推播才是可執行名單_")
+    return "\n".join(lines)

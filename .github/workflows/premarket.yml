@@ -1,6 +1,10 @@
 name: Premarket Night Session
 
 on:
+  schedule:
+    # 兩段式第二段：台灣時間週一至週五 07:35（UTC 前一天 23:35），夜盤 05:00 與美股收盤後
+    # GitHub 排程常延遲 15–30 分鐘，實際約 07:50–08:10 送達
+    - cron: '35 23 * * 0-4'
   workflow_dispatch:  # 允許手動觸發測試
 
 jobs:
@@ -38,4 +42,5 @@ jobs:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           # 庫存以 Google Sheets「Positions」分頁為準（CI 上沒有本機 positions.json）
           TOTAL_CAPITAL: ${{ secrets.TOTAL_CAPITAL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: uv run python premarket.py
