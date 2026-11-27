@@ -6,6 +6,8 @@
   5 日漲幅上限、大盤月線濾網（皆只用訊號當天以前的資料）
 - 隔日開盤跳空超過 max_gap_up_pct 不進場（與盤前清單的放棄價一致）
 - 進場日當天的高低點也納入停損／停利判斷
+- 報酬扣除來回交易成本（round_trip_cost，預設 0.47%），扣完 > 0 才算贏
+- exit_mode="trailing" 模擬實盤持倉健檢的移動停利出場；"fixed" 為固定持有期＋停損停利
 無法逐日重建的條件（歷史基本面、V3.4 籌碼／營收因子）仍未納入，勝率僅反映技術面進場規則。
 """
 
@@ -45,9 +47,19 @@ def backtest(df: pd.DataFrame, params: dict | None = None, market_df: pd.DataFra
     use_mkt = bool(params.get("market_filter_enabled", True))
     mkt_ok = _market_ok_series(df, market_df, int(params.get("market_filter_ma_period", 20))) if use_mkt else None
 
+    cost = float(params.get("round_trip_cost", 0.0047) or 0.0)
+    exit_mode = str(params.get("exit_mode", "fixed"))
+    be_trigger = float(params.get("breakeven_trigger_pct", 0.06))
+    max_hold = int(params.get("max_hold_days", 60))
+
     close = df["close"].astype(float).to_numpy()
-    wins = losses = 0
-    returns: list[float] = []
+    opens = df["open"].astype(float).to_numpy()
+    highs = df["high"].astype(float).to_numpy()
+    lows = df["low"].astype(float).to_numpy()
+    ma10 = pd.Series(close).rolling(10).mean().to_numpy()
+    dates = df["date"].astype(str).str[:10].to_numpy() if "date" in df.columns else np.arange(len(df)).astype(str)
+
+    trades: list[dict] = []
     i = 60
     last = len(df) - hold_days - 1
     while i < last:
@@ -68,41 +80,68 @@ def backtest(df: pd.DataFrame, params: dict | None = None, market_df: pd.DataFra
             i += 1
             continue
 
-        entry = df.iloc[i + 1].get("open")
-        if entry is None or pd.isna(entry) or entry <= 0:
+        entry = opens[i + 1]
+        if not np.isfinite(entry) or entry <= 0:
             i += 1
             continue
-        entry = float(entry)
         if max_gap > 0 and c > 0 and (entry / c - 1.0) > max_gap:
             i += 1  # 跳空過大放棄，隔天可重新評估
             continue
 
-        window = df.iloc[i + 1 : i + 1 + hold_days]  # 含進場日
-        if len(window) < hold_days:
-            break
-        hit_stop = False
-        hit_target = False
-        for _, bar in window.iterrows():  # 依時間順序判斷先觸及停損或停利
-            if float(bar["low"]) <= entry * (1 - stop):
-                hit_stop = True
-                break
-            if float(bar["high"]) >= entry * (1 + target):
-                hit_target = True
-                break
-        if hit_stop:
-            losses += 1
-            returns.append(-stop)
-        elif hit_target:
-            wins += 1
-            returns.append(target)
+        if exit_mode == "trailing":
+            gross, exit_idx = _trailing_exit(i + 1, entry, close, opens, ma10, stop, be_trigger, max_hold)
         else:
-            r = (float(window.iloc[-1]["close"]) - entry) / entry
-            returns.append(r)
-            wins += int(r > 0)
-            losses += int(r <= 0)
-        i = i + hold_days + 1  # 不重疊：持有期結束後才找下一筆
+            gross, exit_idx = _fixed_exit(i + 1, entry, close, highs, lows, hold_days, target, stop)
+        if gross is None:
+            break
+        trades.append({"entry_date": dates[i + 1], "exit_date": dates[exit_idx], "ret": float(gross - cost)})
+        i = exit_idx + 1  # 不重疊：出場後才找下一筆
 
-    total = wins + losses
-    if total == 0:
-        return {"winrate": None, "samples": 0, "avg_return": None}
-    return {"winrate": round(wins / total, 3), "samples": total, "avg_return": round(float(np.mean(returns)), 4)}
+    if not trades:
+        return {"winrate": None, "samples": 0, "avg_return": None, "trades": []}
+    rets = [t["ret"] for t in trades]
+    wins = sum(1 for r in rets if r > 0)
+    return {
+        "winrate": round(wins / len(rets), 3),
+        "samples": len(rets),
+        "avg_return": round(float(np.mean(rets)), 4),
+        "trades": trades,
+    }
+
+
+def _fixed_exit(start, entry, close, highs, lows, hold_days, target, stop):
+    """固定持有：持有期內先碰停損或停利就出場（同一根都碰到時保守算停損），否則期末收盤出場。"""
+    end = start + hold_days
+    if end > len(close):
+        return None, None
+    for j in range(start, end):
+        if lows[j] <= entry * (1 - stop):
+            return -stop, j
+        if highs[j] >= entry * (1 + target):
+            return target, j
+    return close[end - 1] / entry - 1.0, end - 1
+
+
+def _trailing_exit(start, entry, close, opens, ma10, stop, be_trigger, max_hold):
+    """模擬實盤持倉健檢（portfolio_guard.check_holding_health）：
+    每天收盤後檢查 → 隔天開盤執行。
+      - 收盤 ≤ 防守價 → 出場（防守價：初始 = 成本×(1-停損)；波段收盤高點達 +6% 後上移到成本）
+      - 已保本且收盤跌破 10 日線 → 停利出場
+      - 最多持有 max_hold 天，到期收盤出場
+    """
+    n = len(close)
+    peak = entry
+    for j in range(start, min(start + max_hold, n)):
+        peak = max(peak, close[j])
+        breakeven = peak >= entry * (1 + be_trigger)
+        active_stop = entry if breakeven else entry * (1 - stop)
+        exit_now = close[j] <= active_stop or (breakeven and np.isfinite(ma10[j]) and close[j] < ma10[j])
+        if exit_now:
+            if j + 1 >= n:
+                return None, None
+            px = opens[j + 1] if np.isfinite(opens[j + 1]) and opens[j + 1] > 0 else close[j]
+            return px / entry - 1.0, j + 1
+    end = start + max_hold - 1
+    if end >= n:
+        return None, None
+    return close[end] / entry - 1.0, end

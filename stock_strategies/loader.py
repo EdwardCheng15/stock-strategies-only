@@ -73,6 +73,11 @@ _EXTRA_PARAM_DEFAULTS: dict = {
     "min_backtest_samples": 10,   # 勝率需至少這麼多筆「不重疊」回測交易才採信（3 年最多約 35 筆）
     "max_chg_5d_pct": 15.0,       # 5 日漲幅上限 %（防隔日追高）
     "target_annual_vol": 0.35,    # 波動率倉位：年化波動超過此值時按比例縮小建議部位
+    # 回測
+    "round_trip_cost": 0.0047,    # 來回交易成本（手續費 6 折 + 證交稅）
+    "exit_mode": "fixed",         # fixed = 固定持有＋停損停利；trailing = 模擬實盤移動停利
+    "breakeven_trigger_pct": 0.06,# trailing：波段高點達 +6% 後停損上移到成本
+    "max_hold_days": 60,          # trailing：最長持有天數
 }
 
 
@@ -193,7 +198,11 @@ def validate_strategy(data: dict) -> dict:
         v = raw_params.get(key)
         if v is None:
             continue
-        if key == "v34_factors":
+        if key == "exit_mode":
+            if v not in ("fixed", "trailing"):
+                raise StrategyError("exit_mode 必須是 fixed 或 trailing")
+            clean_params[key] = v
+        elif key == "v34_factors":
             if not isinstance(v, dict) or not all(
                 isinstance(fk, str) and isinstance(fw, (int, float)) and not isinstance(fw, bool) and math.isfinite(fw)
                 for fk, fw in v.items()
