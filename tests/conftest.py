@@ -24,3 +24,10 @@ def make_price_df(n=120, start="2023-01-02", base=100.0):
         "close": close,
         "volume": [1000 + i for i in range(n)],
     })
+
+
+@pytest.fixture(autouse=True)
+def _no_market_index_fetch(monkeypatch):
+    """evaluate() 回測的大盤濾網會抓加權指數；測試中一律不抓（避免打真 API）。"""
+    from stock_strategies import evaluate
+    monkeypatch.setattr(evaluate, "_market_df", lambda: None)

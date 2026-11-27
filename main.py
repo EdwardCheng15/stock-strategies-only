@@ -143,13 +143,11 @@ def main():
         stats = perf_summary(updated_perf)
         if stats["count"] > 0:
             print(
-                f"  → 已完成追蹤 {stats['count']} 筆 | "
-                f"T+20 勝率 {stats['winrate_t20']}% | "
-                f"平均報酬 {stats['avg_t20']}% | "
-                f"觸及停利 {stats['hit_target']} 次 / 停損 {stats['hit_stop']} 次"
+                f"  → 已出場 {stats['count']} 筆 | 勝率 {stats['winrate']}% | 平均 {stats['avg_ret']}% | "
+                f"盈虧比 {stats['payoff']} | 追蹤中 {stats['tracking']} | 跳空放棄 {stats['skipped']}"
             )
         else:
-            print("  → 尚未有完成追蹤的訊號（需累積 20 交易日）")
+            print(f"  → 尚未有出場的訊號（追蹤中 {stats.get('tracking', 0)} 筆）")
     except Exception as e:
         print(f"⚠️ Performance 追蹤失敗: {e}", file=sys.stderr)
         stats = None
@@ -228,19 +226,20 @@ def _prescreen_by_tech(pool: list[dict], min_tech: float | None = None) -> tuple
 
 
 def _format_perf_message(stats: dict) -> str:
+    from stock_strategies.loader import exit_rule_text
+    reasons = "、".join(f"{k} {v}" for k, v in sorted(stats.get("reasons", {}).items(), key=lambda x: -x[1]))
+    payoff = stats["payoff"] if stats.get("payoff") is not None else "N/A"
     lines = [
-        "📈 *系統成績單（累積追蹤）*",
+        "📈 *實盤訊號成績單*（與回測相同出場規則）",
         "",
-        f"已完成追蹤訊號: {stats['count']} 筆",
-        f"T+20 勝率: {stats['winrate_t20']}%",
-        f"T+20 平均報酬: {stats['avg_t20']}%",
-        f"觸及停利 +{int(0.10 * 100)}%: {stats['hit_target']} 次",
-        f"觸及停損 -{int(0.08 * 100)}%: {stats['hit_stop']} 次",
-        "",
+        f"已出場 {stats['count']} 筆｜勝率 {stats['winrate']}%｜盈虧比 {payoff}",
+        f"平均每筆 {stats['avg_ret']:+.2f}%（已扣成本）｜平均持有 {stats['avg_hold']} 個交易日",
+        f"出場原因：{reasons}",
+        f"追蹤中 {stats['tracking']} 筆｜開盤跳空放棄 {stats['skipped']} 筆",
+        f"_規則：隔天開盤進場、ATR 停損、{exit_rule_text().replace('出場：', '')}_",
         "_完整紀錄見 Google Sheet『Performance』分頁_",
     ]
     return "\n".join(lines)
-
 
 if __name__ == "__main__":
     main()

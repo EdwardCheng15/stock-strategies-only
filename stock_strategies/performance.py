@@ -1,55 +1,83 @@
-"""訊號效度追蹤（成績單）
+"""訊號效度追蹤（成績單）——用與回測、持倉健檢相同的出場規則追蹤每個 BUY
 
-每天系統發 BUY 後，追蹤該訊號在 T+5 / T+10 / T+20 個交易日的實際表現，
-累積一段時間後就能知道系統到底準不準。
-
-追蹤欄位：
-- signal_date: 訊號產生日（T）
-- entry_close: T 日收盤（參考價）
-- entry_open:  T+1 日開盤（實際進場價）
-- t5_/t10_/t20_ret: 以 entry_open 為基準的實際漲跌幅（%）
-- hit_target/hit_stop: 持有期內是否觸及 +10% / -8%
-- status: 追蹤中 / 完成
+每個盤後 BUY 都假設「隔天開盤進場」，之後逐日依實盤規則判斷出場：
+- 開盤高於放棄價（昨收 × (1 + max_gap_up_pct)）→ 記為「放棄（跳空）」，不計入績效
+- 收盤 ≤ 防守價 → 隔天開盤出場（防守價：初始 = 進場價 × (1 - ATR 停損)；
+  收盤波段高點達 +6% 後上移到進場價 = 保本）
+- 已保本且收盤跌破出場均線（預設月線）→ 隔天開盤停利出場
+- 持有滿 max_hold_days 仍未出場 → 當天收盤出場
+報酬扣除來回成本（round_trip_cost）。T+5/T+10/T+20 收盤報酬保留作參考。
 """
 
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 
-from .config import CONFIG
 from .data import get_price_history
-
+from .loader import merge_params
+from .risk import stop_pct_for_prices
 
 CHECKPOINTS = (5, 10, 20)
+DONE = "完成"
+SKIPPED = "放棄（跳空）"
+TRACKING = "追蹤中"
 
 
 def _parse_float(v):
     try:
-        return float(v)
+        f = float(v)
+        return f if np.isfinite(f) else None
     except (TypeError, ValueError):
         return None
 
 
-def update_performance(
-    existing: list[dict],
-    today_signals: list[dict],
-) -> list[dict]:
-    """補齊舊訊號的 T+1/T+5/T+10/T+20，再附上今日新 BUY。
-
-    回傳要寫回 Google Sheet 的完整紀錄清單。
-    """
-    records = [dict(r) for r in existing]  # 拷貝一份避免 side effect
-
-    # 1. 依 stock_id 分組，對每檔只抓一次歷史價
-    unfinished_by_stock: dict[str, list[dict]] = {}
-    for r in records:
-        if str(r.get("status", "")).strip() == "完成":
+def _simulate_exit(px: pd.DataFrame, entry_iloc: int, entry: float, stop: float, p: dict):
+    """回傳 (exit_iloc, exit_price, reason)；資料還不夠判斷時回 None。與 backtest._trailing_exit 規則一致。"""
+    close = px["close"].astype(float).to_numpy()
+    opens = px["open"].astype(float).to_numpy()
+    ma = pd.Series(close).rolling(int(p.get("exit_ma_days", 20))).mean().to_numpy()
+    be = float(p.get("breakeven_trigger_pct", 0.06))
+    max_hold = int(p.get("max_hold_days", 120))
+    n = len(close)
+    peak = entry
+    for j in range(entry_iloc, min(entry_iloc + max_hold, n)):
+        peak = max(peak, close[j])
+        breakeven = peak >= entry * (1 + be)
+        active_stop = entry if breakeven else entry * (1 - stop)
+        if close[j] <= active_stop:
+            reason = "保本出場" if breakeven else "停損出場"
+        elif breakeven and np.isfinite(ma[j]) and close[j] < ma[j]:
+            reason = "破均線停利"
+        else:
             continue
+        if j + 1 >= n:
+            return None  # 明天開盤才出場，還沒有開盤價
+        px_out = opens[j + 1] if np.isfinite(opens[j + 1]) and opens[j + 1] > 0 else close[j]
+        return j + 1, float(px_out), reason
+    end = entry_iloc + max_hold - 1
+    if end >= n:
+        return None
+    return end, float(close[end]), "持有到期"
+
+
+def update_performance(existing: list[dict], today_signals: list[dict]) -> list[dict]:
+    """補齊舊訊號的進場、T+N 與出場結果，再附上今日新 BUY。回傳要寫回 Sheet 的完整紀錄。"""
+    p = merge_params(None)
+    max_gap = float(p.get("max_gap_up_pct", 0.0) or 0.0) or 0.035
+    cost = float(p.get("round_trip_cost", 0.0047))
+    records = [dict(r) for r in existing]
+
+    pending: dict[str, list[dict]] = {}
+    for r in records:
+        st = str(r.get("status", "")).strip()
+        if st == SKIPPED or (st == DONE and _parse_float(r.get("ret_net")) is not None):
+            continue  # 舊版規則標「完成」但沒有 ret_net 的紀錄，會用新規則重算
         sid = str(r.get("stock_id", "")).strip()
         if sid:
-            unfinished_by_stock.setdefault(sid, []).append(r)
+            pending.setdefault(sid, []).append(r)
 
-    for sid, recs in unfinished_by_stock.items():
+    for sid, recs in pending.items():
         try:
             px = get_price_history(sid, years=1)
         except Exception:
@@ -58,118 +86,99 @@ def update_performance(
             continue
         px = px.sort_values("date").reset_index(drop=True)
         px["date_str"] = px["date"].dt.strftime("%Y-%m-%d")
-        date_to_iloc = {d: i for i, d in enumerate(px["date_str"].tolist())}
+        idx = {d: i for i, d in enumerate(px["date_str"].tolist())}
 
         for r in recs:
-            sd = str(r.get("signal_date", "")).strip()
-            entry_day_iloc = date_to_iloc.get(sd)
-            if entry_day_iloc is None:
-                continue  # 還沒抓到訊號日（可能資料還沒更新）
-
-            # --- T+1 開盤（實際進場價）---
-            if not r.get("entry_open"):
-                if entry_day_iloc + 1 < len(px):
-                    t1_open = px.iloc[entry_day_iloc + 1].get("open")
-                    if t1_open is not None and not pd.isna(t1_open):
-                        r["entry_open"] = round(float(t1_open), 2)
-
-            entry_open = _parse_float(r.get("entry_open"))
-            if not entry_open or entry_open <= 0:
+            sig = idx.get(str(r.get("signal_date", "")).strip())
+            if sig is None or sig + 1 >= len(px):
+                continue
+            entry_iloc = sig + 1
+            if not _parse_float(r.get("entry_open")):
+                r["entry_open"] = round(float(px.at[entry_iloc, "open"]), 2)
+            entry = _parse_float(r.get("entry_open"))
+            ref = _parse_float(r.get("entry_close")) or float(px.at[sig, "close"])
+            if not entry or entry <= 0:
                 continue
 
-            # --- T+N 收盤 & 報酬率 ---
+            gap_cap = _parse_float(r.get("gap_cap")) or round(ref * (1 + max_gap), 2)
+            r["gap_cap"] = gap_cap
+            if entry > gap_cap:
+                r.update({"status": SKIPPED, "exit_reason": "開盤超過放棄價"})
+                continue
+
+            stop = _parse_float(r.get("stop_pct"))
+            if not stop or not 0 < stop < 1:
+                stop = stop_pct_for_prices(px.iloc[: sig + 1], p)
+                r["stop_pct"] = round(stop, 4)
+
             for n in CHECKPOINTS:
-                col_date = f"t{n}_date"
-                col_close = f"t{n}_close"
-                col_ret = f"t{n}_ret"
-                if _parse_float(r.get(col_ret)) is not None:
+                if _parse_float(r.get(f"t{n}_ret")) is not None:
                     continue
-                target_iloc = entry_day_iloc + 1 + n  # T+1 進場，再過 N 天
-                if target_iloc >= len(px):
-                    continue
-                row = px.iloc[target_iloc]
-                r[col_date] = row["date_str"]
-                r[col_close] = round(float(row["close"]), 2)
-                r[col_ret] = round(
-                    (float(row["close"]) / entry_open - 1) * 100, 2
-                )
+                t = entry_iloc + n
+                if t < len(px):
+                    r[f"t{n}_date"] = px.at[t, "date_str"]
+                    r[f"t{n}_close"] = round(float(px.at[t, "close"]), 2)
+                    r[f"t{n}_ret"] = round((float(px.at[t, "close"]) / entry - 1) * 100, 2)
 
-            # --- 是否觸及停利/停損（20 日內）---
-            window_start = entry_day_iloc + 1
-            window_end = min(entry_day_iloc + 1 + 20, len(px))
-            window = px.iloc[window_start:window_end]
-            if len(window) > 0:
-                hi = float(window["high"].max())
-                lo = float(window["low"].min())
-                # 只在還沒標記過時補上，讓結果單調不來回跳
-                if not r.get("hit_target"):
-                    r["hit_target"] = (
-                        "Y" if hi >= entry_open * (1 + CONFIG["target_return"]) else ""
-                    )
-                if not r.get("hit_stop"):
-                    r["hit_stop"] = (
-                        "Y" if lo <= entry_open * (1 - CONFIG["stop_loss"]) else ""
-                    )
-                # 追蹤滿 20 天才把空的明確標 N
-                if len(window) >= 20:
-                    if r.get("hit_target") != "Y":
-                        r["hit_target"] = "N"
-                    if r.get("hit_stop") != "Y":
-                        r["hit_stop"] = "N"
+            if _parse_float(r.get("ret_net")) is None:
+                out = _simulate_exit(px, entry_iloc, entry, stop, p)
+                if out:
+                    ex_i, ex_px, reason = out
+                    r.update({
+                        "exit_date": px.at[ex_i, "date_str"],
+                        "exit_price": round(ex_px, 2),
+                        "exit_reason": reason,
+                        "ret_net": round((ex_px / entry - 1 - cost) * 100, 2),
+                        "hold_days": int(ex_i - entry_iloc + 1),
+                        "status": DONE,
+                    })
+            if _parse_float(r.get("ret_net")) is None:
+                r["status"] = TRACKING
 
-            # 都填好就標完成
-            if _parse_float(r.get(f"t{CHECKPOINTS[-1]}_ret")) is not None:
-                r["status"] = "完成"
-
-    # 2. 把今日新 BUY 加入追蹤清單
     today = datetime.now().strftime("%Y-%m-%d")
-    existing_keys = {
-        (str(r.get("signal_date", "")), str(r.get("stock_id", "")))
-        for r in records
-    }
+    keys = {(str(r.get("signal_date", "")), str(r.get("stock_id", ""))) for r in records}
     for s in today_signals:
         if s.get("action") != "BUY":
             continue
-        sig_date = str(s.get("date", today))
-        sid = str(s.get("stock_id", ""))
-        if (sig_date, sid) in existing_keys:
+        sig_date, sid = str(s.get("date", today)), str(s.get("stock_id", ""))
+        if (sig_date, sid) in keys:
             continue
+        entry_close = _parse_float(s.get("entry_price"))
+        stop_pct = _parse_float(s.get("stop_loss_pct"))
         records.append({
             "signal_date": sig_date,
             "stock_id": sid,
             "name": s.get("name", ""),
             "entry_close": s.get("entry_price", ""),
-            "entry_open": "",
-            "t5_date": "", "t5_close": "", "t5_ret": "",
-            "t10_date": "", "t10_close": "", "t10_ret": "",
-            "t20_date": "", "t20_close": "", "t20_ret": "",
-            "hit_target": "", "hit_stop": "",
-            "status": "追蹤中",
+            "gap_cap": round(entry_close * (1 + max_gap), 2) if entry_close else "",
+            "stop_pct": round(stop_pct / 100, 4) if stop_pct else "",
+            "status": TRACKING,
         })
-
     return records
 
 
 def summary(records: list[dict]) -> dict:
-    """統計已完成的訊號表現"""
-    finished = [r for r in records if str(r.get("status", "")).strip() == "完成"]
-    if not finished:
-        return {
-            "count": 0,
-            "winrate_t20": None,
-            "avg_t20": None,
-            "hit_target": 0,
-            "hit_stop": 0,
-        }
-    rets = [_parse_float(r.get("t20_ret")) for r in finished]
-    rets = [x for x in rets if x is not None]
-    wins = sum(1 for x in rets if x > 0)
-    hit_t = sum(1 for r in finished if str(r.get("hit_target", "")).upper() == "Y")
-    hit_s = sum(1 for r in finished if str(r.get("hit_stop", "")).upper() == "Y")
+    """統計已出場的訊號（不含開盤跳空放棄的）。"""
+    done = [r for r in records
+            if str(r.get("status", "")).strip() == DONE and _parse_float(r.get("ret_net")) is not None]
+    rets = [_parse_float(r.get("ret_net")) for r in done]
+    skipped = sum(1 for r in records if str(r.get("status", "")).strip() == SKIPPED)
+    tracking = sum(1 for r in records if str(r.get("status", "")).strip() == TRACKING)
+    if not rets:
+        return {"count": 0, "skipped": skipped, "tracking": tracking}
+    wins = [x for x in rets if x > 0]
+    losses = [-x for x in rets if x <= 0]
+    reasons: dict[str, int] = {}
+    for r in done:
+        k = str(r.get("exit_reason", "") or "其他")
+        reasons[k] = reasons.get(k, 0) + 1
     return {
-        "count": len(finished),
-        "winrate_t20": round(wins / len(rets) * 100, 1) if rets else None,
-        "avg_t20": round(sum(rets) / len(rets), 2) if rets else None,
-        "hit_target": hit_t,
-        "hit_stop": hit_s,
+        "count": len(rets),
+        "winrate": round(len(wins) / len(rets) * 100, 1),
+        "avg_ret": round(float(np.mean(rets)), 2),
+        "payoff": round(float(np.mean(wins) / np.mean(losses)), 2) if wins and losses else None,
+        "avg_hold": round(float(np.mean([_parse_float(r.get("hold_days")) or 0 for r in done])), 1),
+        "reasons": reasons,
+        "skipped": skipped,
+        "tracking": tracking,
     }

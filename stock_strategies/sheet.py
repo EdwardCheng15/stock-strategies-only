@@ -157,11 +157,11 @@ def read_latest_signals(limit: int = 50) -> list[dict]:
 
 
 PERFORMANCE_HEADERS = [
-    "signal_date", "stock_id", "name", "entry_close", "entry_open",
+    "signal_date", "stock_id", "name", "entry_close", "gap_cap", "entry_open", "stop_pct",
+    "exit_date", "exit_price", "exit_reason", "ret_net", "hold_days", "status",
     "t5_date", "t5_close", "t5_ret",
     "t10_date", "t10_close", "t10_ret",
     "t20_date", "t20_close", "t20_ret",
-    "hit_target", "hit_stop", "status",
 ]
 
 
@@ -181,6 +181,8 @@ def write_performance(records: list[dict]):
     try:
         ws = sh.worksheet("Performance")
         ws.clear()
+        if ws.col_count < len(PERFORMANCE_HEADERS):
+            ws.add_cols(len(PERFORMANCE_HEADERS) - ws.col_count)
     except gspread.WorksheetNotFound:
         rows_alloc = max(2000, len(records) + 100)
         ws = sh.add_worksheet(
