@@ -66,7 +66,8 @@ def backtest(df: pd.DataFrame, params: dict | None = None, market_df: pd.DataFra
 
     trades: list[dict] = []
     i = 60
-    last = len(df) - hold_days - 1
+    # 固定持有模式要保留 hold_days 天的出場空間；移動停利模式只需要隔天開盤能進場（未出場的交易會被捨棄）
+    last = len(df) - hold_days - 1 if params.get("exit_mode", "trailing") == "fixed" else len(df) - 2
     while i < last:
         c = close[i]
         if tech_score_at(df.iloc[i], params)["score"] < min_score:

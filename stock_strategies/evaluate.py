@@ -167,7 +167,8 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
         stop_pct = stop_pct_from_atr(latest.get("atr"), entry, params)
         stop_price = round(entry * (1 - stop_pct), 2)
         target_price = round(entry * (1 + params["target_return"]), 2)
-        rr = round(params["target_return"] / stop_pct, 2)
+        # 風報比只在固定停利模式有意義；移動停利沒有固定目標價
+        rr = round(params["target_return"] / stop_pct, 2) if params.get("exit_mode", "trailing") == "fixed" else ""
         # 每筆最多虧總資金 2%：部位 = 2% ÷ 停損幅度（上限 20%）。ATR 停損已依波動率調整部位
         position_pct = min(2.0 / (stop_pct * 100) * 100, 20.0)
         # 波動率倉位縮放：近 20 日年化波動超過目標值時，部位按比例縮小（最低縮到 1/4）
