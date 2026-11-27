@@ -72,7 +72,8 @@ def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_
             sl = _position_stop_pct(pos, old, px, st)
             upd = {**pos, "archetype": st, "peak_price": round(peak, 2), "stop_pct": round(sl, 4)}
             merged[sid] = upd
-            h = check_holding_health(upd, c_px, ma20 if is_etf else ma10, ma60 if is_etf else ma20, sl_pct=sl)
+            # 月線版：個股保本後跌破月線停利、跌破季線警示（與回測 exit_ma_days=20 一致）；ETF 原本就是月線／季線
+            h = check_holding_health(upd, c_px, ma20, ma60, sl_pct=sl, trim_label="月線", warn_label="季線")
             if h["pnl_pct"] <= -15.0:
                 low20 = float(cs.tail(20).min())
                 h["advice"] = f"🟡 深套反彈站上月線({ma20:.2f})，可分批減碼降成本" if c_px >= ma20 else f"🟣 歷史深套整理（月線反壓 {ma20:.2f}｜破20日低 {low20:.2f} 停損）"

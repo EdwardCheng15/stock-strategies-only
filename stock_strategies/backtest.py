@@ -52,13 +52,14 @@ def backtest(df: pd.DataFrame, params: dict | None = None, market_df: pd.DataFra
     cost = float(params.get("round_trip_cost", 0.0047) or 0.0)
     exit_mode = str(params.get("exit_mode", "fixed"))
     be_trigger = float(params.get("breakeven_trigger_pct", 0.06))
-    max_hold = int(params.get("max_hold_days", 60))
+    max_hold = int(params.get("max_hold_days", 120))
+    exit_ma = int(params.get("exit_ma_days", 20))
 
     close = df["close"].astype(float).to_numpy()
     opens = df["open"].astype(float).to_numpy()
     highs = df["high"].astype(float).to_numpy()
     lows = df["low"].astype(float).to_numpy()
-    ma10 = pd.Series(close).rolling(10).mean().to_numpy()
+    ma_exit = pd.Series(close).rolling(exit_ma).mean().to_numpy()
     use_atr = params.get("stop_mode", "atr") == "atr" and "atr" in df.columns
     atr = df["atr"].astype(float).to_numpy() if use_atr else None
     dates = df["date"].astype(str).str[:10].to_numpy() if "date" in df.columns else np.arange(len(df)).astype(str)
@@ -94,7 +95,7 @@ def backtest(df: pd.DataFrame, params: dict | None = None, market_df: pd.DataFra
 
         trade_stop = stop_pct_from_atr(atr[i] if atr is not None and np.isfinite(atr[i]) else None, c, params) if use_atr else stop
         if exit_mode == "trailing":
-            gross, exit_idx = _trailing_exit(i + 1, entry, close, opens, ma10, trade_stop, be_trigger, max_hold)
+            gross, exit_idx = _trailing_exit(i + 1, entry, close, opens, ma_exit, trade_stop, be_trigger, max_hold)
         else:
             gross, exit_idx = _fixed_exit(i + 1, entry, close, highs, lows, hold_days, target, trade_stop)
         if gross is None:
@@ -127,11 +128,11 @@ def _fixed_exit(start, entry, close, highs, lows, hold_days, target, stop):
     return close[end - 1] / entry - 1.0, end - 1
 
 
-def _trailing_exit(start, entry, close, opens, ma10, stop, be_trigger, max_hold):
+def _trailing_exit(start, entry, close, opens, ma_exit, stop, be_trigger, max_hold):
     """模擬實盤持倉健檢（portfolio_guard.check_holding_health）：
     每天收盤後檢查 → 隔天開盤執行。
       - 收盤 ≤ 防守價 → 出場（防守價：初始 = 成本×(1-停損)；波段收盤高點達 +6% 後上移到成本）
-      - 已保本且收盤跌破 10 日線 → 停利出場
+      - 已保本且收盤跌破出場均線（exit_ma_days，預設月線）→ 停利出場
       - 最多持有 max_hold 天，到期收盤出場
     """
     n = len(close)
@@ -140,7 +141,7 @@ def _trailing_exit(start, entry, close, opens, ma10, stop, be_trigger, max_hold)
         peak = max(peak, close[j])
         breakeven = peak >= entry * (1 + be_trigger)
         active_stop = entry if breakeven else entry * (1 - stop)
-        exit_now = close[j] <= active_stop or (breakeven and np.isfinite(ma10[j]) and close[j] < ma10[j])
+        exit_now = close[j] <= active_stop or (breakeven and np.isfinite(ma_exit[j]) and close[j] < ma_exit[j])
         if exit_now:
             if j + 1 >= n:
                 return None, None

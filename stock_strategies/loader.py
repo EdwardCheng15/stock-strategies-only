@@ -77,7 +77,8 @@ _EXTRA_PARAM_DEFAULTS: dict = {
     "round_trip_cost": 0.0047,    # 來回交易成本（手續費 6 折 + 證交稅）
     "exit_mode": "trailing",      # trailing = 模擬實盤移動停利（預設，與持倉健檢一致）；fixed = 固定持有＋停損停利
     "breakeven_trigger_pct": 0.06,# trailing：波段高點達 +6% 後停損上移到成本
-    "max_hold_days": 60,          # trailing：最長持有天數
+    "max_hold_days": 120,         # trailing：最長持有天數
+    "exit_ma_days": 20,           # trailing：保本後收盤跌破此均線停利（月線版；帳戶模擬優於 10 日線）
     # 停損
     "stop_mode": "atr",           # atr = 依波動率（預設）；fixed = 固定 stop_loss
     "atr_stop_mult": 2.5,         # 停損 = 2.5 × ATR14 ÷ 收盤
@@ -305,9 +306,16 @@ def param_defaults() -> dict:
     return dict(_PARAM_DEFAULTS)
 
 
+def ma_label(params: dict | None = None) -> str:
+    """出場均線的中文名稱，例如 20 → 破月線。"""
+    p = params or merge_params(None)
+    n = int(p.get("exit_ma_days", 20))
+    return {5: "破週線", 10: "破 10 日線", 20: "破月線", 60: "破季線"}.get(n, f"破 {n} 日線")
+
+
 def exit_rule_text(params: dict | None = None) -> str:
     """推播用的出場規則簡述。"""
     p = params or merge_params(None)
     if p.get("exit_mode", "trailing") == "trailing":
-        return f"出場：漲 +{float(p.get('breakeven_trigger_pct', 0.06))*100:.0f}% 後保本、破 10 日線停利"
+        return f"出場：漲 +{float(p.get('breakeven_trigger_pct', 0.06))*100:.0f}% 後保本、{ma_label(p)}停利"
     return f"目標 +{float(p.get('target_return', 0.1))*100:.0f}%"

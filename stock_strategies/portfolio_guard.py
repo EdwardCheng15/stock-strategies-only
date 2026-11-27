@@ -52,8 +52,12 @@ def check_holding_health(
     ma20: float,
     sl_pct: float = 0.08,
     breakeven_trigger_pct: float = 0.06,
+    trim_label: str = "10 日線",
+    warn_label: str = "月線",
 ) -> dict[str, Any]:
-    """單檔持倉移動停利與均線健檢"""
+    """單檔持倉移動停利與均線健檢。
+
+    ma10 = 保本後的停利均線、ma20 = 轉弱警示均線（參數名沿用舊版，實際天數由呼叫端決定）"""
     cost = float(pos.get("avg_cost", 0) or 0)
     if cost <= 0 or close_px <= 0:
         return {"status": "UNKNOWN", "pnl_pct": 0.0, "advice": "成本或收盤價無效"}
@@ -80,7 +84,7 @@ def check_holding_health(
             "status": "TRIM",
             "pnl_pct": round(pnl_pct, 2),
             "active_stop": round(active_stop, 2),
-            "advice": f"🟠 獲利回吐跌破 10 日線（{ma10:.2f}），建議分批停利",
+            "advice": f"🟠 獲利回吐跌破{trim_label}（{ma10:.2f}），停利出場",
         }
 
     if close_px < ma20:
@@ -88,7 +92,7 @@ def check_holding_health(
             "status": "WARN",
             "pnl_pct": round(pnl_pct, 2),
             "active_stop": round(active_stop, 2),
-            "advice": f"🟡 跌破月線（{ma20:.2f}），留意轉弱風險",
+            "advice": f"🟡 跌破{warn_label}（{ma20:.2f}），留意轉弱風險",
         }
 
     mode = "保本啟動" if breakeven_active else "初始風控"

@@ -185,7 +185,8 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                 )
                 position_pct *= scale
         if params.get("exit_mode", "trailing") == "trailing":
-            exit_txt = f"漲 +{float(params.get('breakeven_trigger_pct', 0.06))*100:.0f}% 後保本、破 10 日線停利"
+            from .loader import ma_label
+            exit_txt = f"漲 +{float(params.get('breakeven_trigger_pct', 0.06))*100:.0f}% 後保本、{ma_label(params)}停利"
         else:
             exit_txt = f"停利 +{params['target_return']*100:.0f}%"
         entry_rule = (

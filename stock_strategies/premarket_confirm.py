@@ -185,7 +185,7 @@ def format_final_list(
             pos_v = _num(s.get("allocated_size_pct", s.get("position_pct")))
             pos = "總曝險已達 70% 上限，不建議加倉" if pos_v == 0 else (f"{pos_v:g}%" if pos_v is not None else "—")
             gap_cap = s.get("gap_cap_price")
-            exit_short = "保本後破 10 日線出場" if trailing else f"目標 {s.get('target_price')}"
+            exit_short = "保本後破月線出場" if trailing else f"目標 {s.get('target_price')}"
             lines.append(f"*{s.get('stock_id')} {s.get('name')}* {s.get('signal_score')}分｜勝率 {wr_txt}")
             lines.append(
                 f"  昨收 {s.get('entry_price')}｜開盤高於 *{gap_cap:.2f}*（+{s['gap_cap_pct']:.1f}%）放棄" if gap_cap else f"  昨收 {s.get('entry_price')}"

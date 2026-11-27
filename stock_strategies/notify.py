@@ -490,7 +490,7 @@ def format_candidates(
                 f"*{s['stock_id']} {s['name']}* {s['signal_score']}分｜勝率 {wr}({c.get('backtest_samples', 0)}筆)"
             )
             exit_txt = (
-                "保本後破 10 日線出場" if s.get("exit_mode", "trailing") == "trailing" else f"目標 {s['target_price']}"
+                "保本後破月線出場" if s.get("exit_mode", "trailing") == "trailing" else f"目標 {s['target_price']}"
             )
             lines.append(
                 f"  收 {entry:.2f}｜追價上限 {entry*1.035:.2f}｜停損 {s['stop_loss_price']}｜"
