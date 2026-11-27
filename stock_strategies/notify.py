@@ -489,9 +489,12 @@ def format_candidates(
             lines.append(
                 f"*{s['stock_id']} {s['name']}* {s['signal_score']}分｜勝率 {wr}({c.get('backtest_samples', 0)}筆)"
             )
+            exit_txt = (
+                "保本後破 10 日線出場" if s.get("exit_mode", "trailing") == "trailing" else f"目標 {s['target_price']}"
+            )
             lines.append(
                 f"  收 {entry:.2f}｜追價上限 {entry*1.035:.2f}｜停損 {s['stop_loss_price']}｜"
-                f"目標 {s['target_price']}｜部位 {s.get('allocated_size_pct', s.get('position_size_pct'))}%"
+                f"{exit_txt}｜部位 {s.get('allocated_size_pct', s.get('position_size_pct'))}%"
             )
             notes = [n for n in s.get("risk_notes", []) if "→" in n or "調降" in n or "波動" in n]
             if notes:
@@ -507,5 +510,7 @@ def format_candidates(
             lines.append(f"• {s['stock_id']} {s['name']} {s['signal_score']}分" + (f"｜{why}" if why else ""))
         lines.append("")
 
+    from .loader import exit_rule_text
+    lines.append(f"📐 {exit_rule_text()}（每天盤前持倉健檢會提醒）")
     lines.append("💡 _這是候選，不是最終清單；明早 08:00 盤前推播才是可執行名單_")
     return "\n".join(lines)

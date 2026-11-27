@@ -75,7 +75,7 @@ _EXTRA_PARAM_DEFAULTS: dict = {
     "target_annual_vol": 0.35,    # 波動率倉位：年化波動超過此值時按比例縮小建議部位
     # 回測
     "round_trip_cost": 0.0047,    # 來回交易成本（手續費 6 折 + 證交稅）
-    "exit_mode": "fixed",         # fixed = 固定持有＋停損停利；trailing = 模擬實盤移動停利
+    "exit_mode": "trailing",      # trailing = 模擬實盤移動停利（預設，與持倉健檢一致）；fixed = 固定持有＋停損停利
     "breakeven_trigger_pct": 0.06,# trailing：波段高點達 +6% 後停損上移到成本
     "max_hold_days": 60,          # trailing：最長持有天數
 }
@@ -294,3 +294,11 @@ def delete_strategy(sid: str) -> bool:
 def param_defaults() -> dict:
     """讓 API / 前端拿預設值用"""
     return dict(_PARAM_DEFAULTS)
+
+
+def exit_rule_text(params: dict | None = None) -> str:
+    """推播用的出場規則簡述。"""
+    p = params or merge_params(None)
+    if p.get("exit_mode", "trailing") == "trailing":
+        return f"出場：漲 +{float(p.get('breakeven_trigger_pct', 0.06))*100:.0f}% 後保本、破 10 日線停利"
+    return f"目標 +{float(p.get('target_return', 0.1))*100:.0f}%"

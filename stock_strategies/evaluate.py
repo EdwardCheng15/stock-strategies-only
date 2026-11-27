@@ -179,9 +179,12 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                     f"年化波動 {ann_vol*100:.0f}% > {target_vol*100:.0f}%，部位縮為 {scale*100:.0f}%（{position_pct:.1f}%→{position_pct*scale:.1f}%）"
                 )
                 position_pct *= scale
+        if params.get("exit_mode", "trailing") == "trailing":
+            exit_txt = f"漲 +{float(params.get('breakeven_trigger_pct', 0.06))*100:.0f}% 後保本、破 10 日線停利"
+        else:
+            exit_txt = f"停利 +{params['target_return']*100:.0f}%"
         entry_rule = (
-            f"明日以開盤價進場，停損 -{params['stop_loss']*100:.0f}% / "
-            f"停利 +{params['target_return']*100:.0f}%（下方參考價為今日收盤）"
+            f"明日以開盤價進場，停損 -{params['stop_loss']*100:.0f}% / {exit_txt}（下方參考價為今日收盤）"
         )
 
         if bt.get("samples", 0) < 8:
@@ -237,6 +240,7 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
             "position_size_pct": round(position_pct, 1),
             "volatility_ann": round(ann_vol, 3) if ann_vol is not None else None,
             "entry_rule": entry_rule,
+            "exit_mode": params.get("exit_mode", "trailing"),
         })
         return result
 

@@ -152,6 +152,8 @@ def format_final_list(
     lines.extend(confirmed["header_notes"])
     lines.append("")
 
+    from .loader import merge_params, exit_rule_text
+    trailing = merge_params(None).get("exit_mode", "trailing") == "trailing"
     buys = confirmed["buys"]
     if buys:
         lines.append("🟢 *可執行 BUY*")
@@ -161,11 +163,12 @@ def format_final_list(
             pos_v = _num(s.get("allocated_size_pct", s.get("position_pct")))
             pos = "總曝險已達 70% 上限，不建議加倉" if pos_v == 0 else (f"{pos_v:g}%" if pos_v is not None else "—")
             gap_cap = s.get("gap_cap_price")
+            exit_short = "保本後破 10 日線出場" if trailing else f"目標 {s.get('target_price')}"
             lines.append(f"*{s.get('stock_id')} {s.get('name')}* {s.get('signal_score')}分｜勝率 {wr_txt}")
             lines.append(
                 f"  昨收 {s.get('entry_price')}｜開盤高於 *{gap_cap:.2f}*（+{s['gap_cap_pct']:.1f}%）放棄" if gap_cap else f"  昨收 {s.get('entry_price')}"
             )
-            lines.append(f"  停損 {s.get('stop_loss_price')}｜目標 {s.get('target_price')}｜部位 {pos}")
+            lines.append(f"  停損 {s.get('stop_loss_price')}｜{exit_short}｜部位 {pos}")
             if s.get("confirm_notes"):
                 lines.append(f"  ⚠️ {' / '.join(s['confirm_notes'])}")
     else:
@@ -185,5 +188,7 @@ def format_final_list(
             lines.append(f"• {s.get('stock_id')} {s.get('name')} {s.get('signal_score')}分")
         lines.append("")
 
+    if buys:
+        lines.append(f"📐 {exit_rule_text()}；停損依各檔停損價")
     lines.append("💡 _9:00 開盤價超過放棄價不追；進場後依停損價嚴格執行_")
     return "\n".join(lines)
