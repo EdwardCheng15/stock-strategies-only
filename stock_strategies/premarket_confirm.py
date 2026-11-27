@@ -60,7 +60,7 @@ def staleness_note(batch_day: str, today: date | None = None) -> str:
     return ""
 
 
-def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_stats: dict | None = None) -> dict:
+def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict) -> dict:
     """依夜盤與美股風險確認候選。
 
     規則：
@@ -68,8 +68,6 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
       - 美股強警示 → BUY 降為 WATCH
       - 美股警示 → BUY 保留，追價上限收緊到 +2%
       - 夜盤小跌 → BUY 保留，標註逆風
-      - 個股美股推估（連動美股＋產業指數＋EWT，見 us_market.infer_stock_outlook）：
-          強逆風 → 該檔 BUY 暫緩；逆風 → 標註等開盤止穩；強順風 → 提醒可能開高觸及放棄價
     回傳 {"buys", "downgraded", "watches", "header_notes"}，每檔附 gap_cap_price。
     """
     big = float(CONFIG.get("night_gap_big", 1.5))
@@ -87,11 +85,6 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
     elif us_level == "warn":
         header_notes.append(f"⚠️ 美股警示，追價上限收緊為 +{WARN_GAP_PCT:.0f}%")
 
-    outlook_fn = None
-    if us_stats:
-        from .us_market import infer_stock_outlook
-        outlook_fn = lambda sid: infer_stock_outlook(sid, us_stats)
-
     buys, downgraded, watches = [], [], []
     for s in batch:
         act = _act(s)
@@ -102,8 +95,6 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
         item["gap_cap_price"] = round(entry * (1 + gap_pct / 100), 2) if entry else None
         item["gap_cap_pct"] = gap_pct
         item["confirm_notes"] = []
-        item["us_outlook"] = outlook_fn(s.get("stock_id", "")) if outlook_fn else {"level": "unknown", "tag": "", "detail": ""}
-        us_lv = item["us_outlook"]["level"]
         if act == "WATCH":
             watches.append(item)
             continue
@@ -111,8 +102,6 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
             item["confirm_notes"].append(f"夜盤大跌 {night_pct:+.1f}%")
         if us_level == "strong_warn":
             item["confirm_notes"].append("美股強警示")
-        if us_lv == "strong_head":
-            item["confirm_notes"].append(f"連動美股強逆風（{item['us_outlook']['detail']}）")
         if item["confirm_notes"]:
             downgraded.append(item)
             continue
@@ -120,10 +109,6 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
             item["confirm_notes"].append(f"夜盤逆風 {night_pct:+.1f}%，等開盤止穩")
         if us_level == "warn":
             item["confirm_notes"].append("美股警示，勿追跳空")
-        if us_lv == "head":
-            item["confirm_notes"].append("連動美股逆風，等開盤止穩再進")
-        elif us_lv == "strong_tail":
-            item["confirm_notes"].append("連動美股強漲，可能開高超過放棄價，不追")
         buys.append(item)
 
     key = lambda x: -(_num(x.get("signal_score"), 0) or 0)
@@ -142,7 +127,6 @@ def format_final_list(
     us_risk: dict,
     stale_note: str = "",
     watch_limit: int = 6,
-    open_outlook: dict | None = None,
     us_stats: dict | None = None,
 ) -> str:
     today = datetime.now()
@@ -169,8 +153,6 @@ def format_final_list(
         from .us_market import format_index_overview
         lines.extend(format_index_overview(us_stats))
     lines.append(us_line)
-    if open_outlook and open_outlook.get("est") is not None:
-        lines.append(f"🇺🇸 美股推估台股開盤：{open_outlook['label']}（{open_outlook['basis']}）")
     lines.extend(confirmed["header_notes"])
     lines.append("")
 
@@ -191,9 +173,6 @@ def format_final_list(
                 f"  昨收 {s.get('entry_price')}｜開盤高於 *{gap_cap:.2f}*（+{s['gap_cap_pct']:.1f}%）放棄" if gap_cap else f"  昨收 {s.get('entry_price')}"
             )
             lines.append(f"  停損 {s.get('stop_loss_price')}｜{exit_short}｜部位 {pos}")
-            uo = s.get("us_outlook") or {}
-            if uo.get("tag"):
-                lines.append(f"  {uo['tag']}（{uo['detail']}）")
             if s.get("confirm_notes"):
                 lines.append(f"  ⚠️ {' / '.join(s['confirm_notes'])}")
     else:
@@ -210,9 +189,7 @@ def format_final_list(
     if watches:
         lines.append(f"🟡 *觀察 前 {min(watch_limit, len(watches))} 名*")
         for s in watches[:watch_limit]:
-            uo = s.get("us_outlook") or {}
-            star = f"｜{uo['tag']}" if uo.get("level") in ("tail", "strong_tail") else ""
-            lines.append(f"• {s.get('stock_id')} {s.get('name')} {s.get('signal_score')}分{star}")
+            lines.append(f"• {s.get('stock_id')} {s.get('name')} {s.get('signal_score')}分")
         lines.append("")
 
     # 候選股相關的美股供應鏈（只列有關的，取代原本整份美股快報）

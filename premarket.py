@@ -3,8 +3,7 @@
 流程：
   1. 讀 Signals 分頁最新一批盤後候選
   2. 抓昨晚台指期夜盤、美股隔夜收盤
-  3. 依夜盤與美股風險確認 BUY（大跌/強警示 → 暫緩；警示 → 收緊追價上限），
-     並用連動美股、費半/那指、EWT 推估每檔今日方向（強逆風 → 該檔暫緩）
+  3. 依夜盤與美股風險確認 BUY（大跌/強警示 → 暫緩；警示 → 收緊追價上限）
   4. 依目前庫存與 TOTAL_CAPITAL 分配建議部位
   5. 推兩則：今日最終清單（含美股指數、候選股 × 美股推估與供應鏈）→ 持倉健檢與資金水位
 
@@ -25,7 +24,7 @@ except ImportError:
 from stock_strategies.night_session import get_night_session
 from stock_strategies.sheet import read_latest_signals
 from stock_strategies.notify import send_telegram
-from stock_strategies.us_market import fetch_us_stats, get_us_risk, get_us_market_summary, market_open_outlook
+from stock_strategies.us_market import fetch_us_stats, get_us_risk, get_us_market_summary
 from stock_strategies.premarket_confirm import (
     latest_batch,
     staleness_note,
@@ -84,14 +83,13 @@ def main():
     us_risk = get_us_risk(us_stats)
     print(f"  → 美股風險等級 {us_risk['level']}")
 
-    confirmed = confirm_candidates(batch, night, us_risk, us_stats)
-    open_outlook = market_open_outlook(us_stats) if us_stats else None
+    confirmed = confirm_candidates(batch, night, us_risk)
     _allocate(confirmed["buys"])
     print(f"  → 可執行 BUY {len(confirmed['buys'])}，暫緩 {len(confirmed['downgraded'])}")
 
     print("發送 Telegram：今日最終清單...")
     send_telegram(format_final_list(confirmed, batch_day, night, us_risk, staleness_note(batch_day),
-                                    open_outlook=open_outlook, us_stats=us_stats))
+                                    us_stats=us_stats))
     time.sleep(0.5)
 
     # 完整美股供應鏈快報預設不另外推（已併入最終清單）；需要時在 .env 設 PREMARKET_FULL_US=1
