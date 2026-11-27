@@ -322,20 +322,84 @@ def format_index_overview(stats: dict[str, dict]) -> list[str]:
     return ["🇺🇸 " + "｜".join(parts[:half]), "　 " + "｜".join(parts[half:])] if parts else []
 
 
-def format_candidate_chains(stats: dict[str, dict], candidates: dict[str, str], threshold: float = 2.0) -> list[str]:
-    """只列出和盤後候選股有關的美股供應鏈：每條鏈的美股漲跌 → 對應到哪幾檔候選。
-    candidates: {代號: 名稱}"""
+# 供應鏈判斷門檻（%）：沿用本模組的 ±2% 順逆風門檻與 -3%/-5% 風險矩陣精神
+CHAIN_STRONG_HEAD = -3.0   # 鏈平均 ≤ -3% → 強逆風
+CHAIN_HEAD = -1.5          # 鏈平均 ≤ -1.5% → 逆風
+CHAIN_TAIL = 1.0           # 鏈平均 ≥ +1% → 順風
+CHAIN_STRONG_TAIL = 2.0    # 鏈平均 ≥ +2% → 強順風
+
+VERDICT = {
+    "strong_head": ("🔴", "強逆風"),
+    "head": ("🟠", "逆風"),
+    "neutral": ("⚪", "中性"),
+    "tail": ("🟢", "順風"),
+    "strong_tail": ("🔥", "強順風"),
+}
+
+
+def _level(avg: float) -> str:
+    if avg <= CHAIN_STRONG_HEAD:
+        return "strong_head"
+    if avg <= CHAIN_HEAD:
+        return "head"
+    if avg >= CHAIN_STRONG_TAIL:
+        return "strong_tail"
+    if avg >= CHAIN_TAIL:
+        return "tail"
+    return "neutral"
+
+
+def chain_verdicts(stats: dict[str, dict]) -> dict[str, dict]:
+    """每條供應鏈的美股平均漲跌與判斷。回傳 {鏈名: {avg, level, tickers: [(名稱, %)]}}"""
+    out = {}
+    for g in SUPPLY_CHAIN_GROUPS:
+        tick = [(cname, float(stats[sym]["pct"])) for sym, cname in g["tickers"].items() if sym in stats]
+        if not tick:
+            continue
+        avg = sum(p for _, p in tick) / len(tick)
+        out[g["name"]] = {"avg": avg, "level": _level(avg), "tickers": tick}
+    return out
+
+
+def stock_us_verdict(stock_id: str, stats: dict[str, dict], chains: dict[str, dict] | None = None) -> dict:
+    """候選股的美股判斷 = 所屬各鏈平均的平均；任一所屬鏈為強逆風（≤ -3%）時直接判強逆風（保守）。
+    不在任何供應鏈的股票回 level=none（不做個股判斷，只受整體美股風險燈號影響）。"""
+    chains = chains if chains is not None else chain_verdicts(stats)
+    code = str(stock_id).strip()
+    mine = [(g["name"], chains[g["name"]]) for g in SUPPLY_CHAIN_GROUPS if code in g["tw_stocks"] and g["name"] in chains]
+    if not mine:
+        return {"level": "none", "avg": None, "chains": []}
+    avg = sum(c["avg"] for _, c in mine) / len(mine)
+    level = "strong_head" if any(c["level"] == "strong_head" for _, c in mine) else _level(avg)
+    return {"level": level, "avg": avg, "chains": [n for n, _ in mine]}
+
+
+ACTION_TEXT = {
+    "strong_head": "BUY→暫緩",
+    "head": "等開盤止穩再進",
+    "neutral": "照計畫",
+    "tail": "照計畫",
+    "strong_tail": "預期開高，超過放棄價不追",
+}
+
+
+def format_candidate_chains(stats: dict[str, dict], candidates: dict[str, str],
+                            actions: dict[str, str] | None = None, threshold: float = 2.0) -> list[str]:
+    """候選股相關的美股供應鏈與判斷：每條鏈的美股漲跌 → 判斷 → 對應候選股與今日動作。
+    candidates: {代號: 名稱}；actions: {代號: 該檔綜合所有所屬鏈後的今日動作文字}"""
+    actions = actions or {}
+    chains = chain_verdicts(stats)
     lines = []
     for g in SUPPLY_CHAIN_GROUPS:
-        hit = [f"{candidates[c]}({c})" for c in g["tw_stocks"] if c in candidates]
-        if not hit:
+        hit = [c for c in g["tw_stocks"] if c in candidates]
+        if not hit or g["name"] not in chains:
             continue
-        tick = []
-        for sym, cname in g["tickers"].items():
-            if sym in stats:
-                pc = stats[sym]["pct"]
-                mark = "🔥" if pc >= threshold else ("❄️" if pc <= -threshold else "")
-                tick.append(f"{mark}{cname} {pc:+.1f}%")
-        if tick:
-            lines.append(f"▸ {g['name']}：{' / '.join(tick)} → {'、'.join(hit)}")
+        cv = chains[g["name"]]
+        emoji, label = VERDICT[cv["level"]]
+        tick = " / ".join(
+            f"{'🔥' if p >= threshold else ('❄️' if p <= -threshold else '')}{n} {p:+.1f}%" for n, p in cv["tickers"]
+        )
+        who = [f"{candidates[c]}({c}){(' ' + actions[c]) if actions.get(c) else ''}" for c in hit]
+        lines.append(f"▸ {g['name']}（均 {cv['avg']:+.1f}%）{emoji}{label}：{tick}")
+        lines.append(f"   → {'、'.join(who)}")
     return lines

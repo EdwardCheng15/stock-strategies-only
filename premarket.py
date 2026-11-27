@@ -3,7 +3,8 @@
 流程：
   1. 讀 Signals 分頁最新一批盤後候選
   2. 抓昨晚台指期夜盤、美股隔夜收盤
-  3. 依夜盤與美股風險確認 BUY（大跌/強警示 → 暫緩；警示 → 收緊追價上限）
+  3. 依夜盤與美股風險確認 BUY（大跌/強警示 → 暫緩；警示 → 收緊追價上限），
+     再依候選股所屬的美股供應鏈判斷（強逆風 → 該檔暫緩；逆風 → 等止穩；強順風 → 開高不追）
   4. 依目前庫存與 TOTAL_CAPITAL 分配建議部位
   5. 推兩則：今日最終清單（含美股指數、候選股 × 美股推估與供應鏈）→ 持倉健檢與資金水位
 
@@ -83,7 +84,7 @@ def main():
     us_risk = get_us_risk(us_stats)
     print(f"  → 美股風險等級 {us_risk['level']}")
 
-    confirmed = confirm_candidates(batch, night, us_risk)
+    confirmed = confirm_candidates(batch, night, us_risk, us_stats)
     _allocate(confirmed["buys"])
     print(f"  → 可執行 BUY {len(confirmed['buys'])}，暫緩 {len(confirmed['downgraded'])}")
 

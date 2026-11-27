@@ -60,7 +60,7 @@ def staleness_note(batch_day: str, today: date | None = None) -> str:
     return ""
 
 
-def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict) -> dict:
+def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_stats: dict | None = None) -> dict:
     """依夜盤與美股風險確認候選。
 
     規則：
@@ -68,6 +68,9 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict) -> 
       - 美股強警示 → BUY 降為 WATCH
       - 美股警示 → BUY 保留，追價上限收緊到 +2%
       - 夜盤小跌 → BUY 保留，標註逆風
+      - 所屬美股供應鏈（us_market.stock_us_verdict）：
+          強逆風（任一所屬鏈平均 ≤ -3%）→ 該檔 BUY 暫緩
+          逆風 → 保留，等開盤止穩再進；強順風 → 保留，預期開高、超過放棄價不追
     回傳 {"buys", "downgraded", "watches", "header_notes"}，每檔附 gap_cap_price。
     """
     big = float(CONFIG.get("night_gap_big", 1.5))
@@ -85,6 +88,12 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict) -> 
     elif us_level == "warn":
         header_notes.append(f"⚠️ 美股警示，追價上限收緊為 +{WARN_GAP_PCT:.0f}%")
 
+    verdict_fn = None
+    if us_stats:
+        from .us_market import chain_verdicts, stock_us_verdict
+        _chains = chain_verdicts(us_stats)
+        verdict_fn = lambda sid: stock_us_verdict(sid, us_stats, _chains)
+
     buys, downgraded, watches = [], [], []
     for s in batch:
         act = _act(s)
@@ -95,6 +104,8 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict) -> 
         item["gap_cap_price"] = round(entry * (1 + gap_pct / 100), 2) if entry else None
         item["gap_cap_pct"] = gap_pct
         item["confirm_notes"] = []
+        uv = verdict_fn(s.get("stock_id", "")) if verdict_fn else {"level": "none", "avg": None, "chains": []}
+        item["us_verdict"] = uv
         if act == "WATCH":
             watches.append(item)
             continue
@@ -102,6 +113,8 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict) -> 
             item["confirm_notes"].append(f"夜盤大跌 {night_pct:+.1f}%")
         if us_level == "strong_warn":
             item["confirm_notes"].append("美股強警示")
+        if uv["level"] == "strong_head":
+            item["confirm_notes"].append(f"所屬美股供應鏈強逆風（{'、'.join(uv['chains'])}）")
         if item["confirm_notes"]:
             downgraded.append(item)
             continue
@@ -109,6 +122,10 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict) -> 
             item["confirm_notes"].append(f"夜盤逆風 {night_pct:+.1f}%，等開盤止穩")
         if us_level == "warn":
             item["confirm_notes"].append("美股警示，勿追跳空")
+        if uv["level"] == "head":
+            item["confirm_notes"].append(f"美股供應鏈逆風（均 {uv['avg']:+.1f}%），等開盤止穩再進")
+        elif uv["level"] == "strong_tail":
+            item["confirm_notes"].append(f"美股供應鏈強漲（均 {uv['avg']:+.1f}%），預期開高，超過放棄價不追")
         buys.append(item)
 
     key = lambda x: -(_num(x.get("signal_score"), 0) or 0)
@@ -173,6 +190,11 @@ def format_final_list(
                 f"  昨收 {s.get('entry_price')}｜開盤高於 *{gap_cap:.2f}*（+{s['gap_cap_pct']:.1f}%）放棄" if gap_cap else f"  昨收 {s.get('entry_price')}"
             )
             lines.append(f"  停損 {s.get('stop_loss_price')}｜{exit_short}｜部位 {pos}")
+            uv = s.get("us_verdict") or {}
+            if uv.get("level") not in (None, "none"):
+                from .us_market import VERDICT
+                e, lab = VERDICT[uv["level"]]
+                lines.append(f"  🇺🇸 供應鏈 {e}{lab}（{len(uv['chains'])} 條鏈平均 {uv['avg']:+.1f}%）")
             if s.get("confirm_notes"):
                 lines.append(f"  ⚠️ {' / '.join(s['confirm_notes'])}")
     else:
@@ -196,9 +218,16 @@ def format_final_list(
     if us_stats:
         from .us_market import format_candidate_chains
         cands = {str(s.get("stock_id")): str(s.get("name", "")) for s in buys + confirmed["downgraded"] + watches}
-        chain_lines = format_candidate_chains(us_stats, cands)
+        from .us_market import ACTION_TEXT
+        acts = {
+            str(s.get("stock_id")): "BUY " + ACTION_TEXT.get((s.get("us_verdict") or {}).get("level"), "照計畫")
+            for s in buys
+        }
+        acts.update({str(s.get("stock_id")): "暫緩" for s in confirmed["downgraded"]})
+        acts.update({str(s.get("stock_id")): "觀察" for s in watches})
+        chain_lines = format_candidate_chains(us_stats, cands, acts)
         if chain_lines:
-            lines.append("🔗 *候選股 × 美股供應鏈*")
+            lines.append("🔗 *候選股 × 美股供應鏈判斷*（個股動作＝綜合所屬各鏈）")
             lines.extend(chain_lines)
             lines.append("")
 
