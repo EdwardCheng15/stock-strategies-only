@@ -60,6 +60,10 @@ def get_price_history(stock_id: str, years: int = 3) -> pd.DataFrame:
     for col in ["open", "high", "low", "close", "volume"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+    # FinMind 在停牌／無成交日會回傳價格 0，會讓回測算出 -100% 或無限大報酬，一律剔除
+    price_cols = [c for c in ["open", "high", "low", "close"] if c in df.columns]
+    if price_cols:
+        df = df[(df[price_cols] > 0).all(axis=1)]
     return df.sort_values("date").reset_index(drop=True)
 
 
