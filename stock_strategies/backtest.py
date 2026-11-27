@@ -8,6 +8,7 @@
 - 進場日當天的高低點也納入停損／停利判斷
 - 報酬扣除來回交易成本（round_trip_cost，預設 0.47%），扣完 > 0 才算贏
 - exit_mode="trailing" 模擬實盤持倉健檢的移動停利出場；"fixed" 為固定持有期＋停損停利
+- stop_mode="atr" 每筆停損 = clip(2.5 × ATR14 ÷ 訊號日收盤, 4%, 15%)；"fixed" 用固定 stop_loss
 無法逐日重建的條件（歷史基本面、V3.4 籌碼／營收因子）仍未納入，勝率僅反映技術面進場規則。
 """
 
@@ -16,6 +17,7 @@ import pandas as pd
 
 from .config import CONFIG
 from .indicators import tech_score_at
+from .risk import stop_pct_from_atr
 
 
 def _market_ok_series(df: pd.DataFrame, market_df: pd.DataFrame | None, ma_period: int) -> pd.Series | None:
@@ -57,6 +59,8 @@ def backtest(df: pd.DataFrame, params: dict | None = None, market_df: pd.DataFra
     highs = df["high"].astype(float).to_numpy()
     lows = df["low"].astype(float).to_numpy()
     ma10 = pd.Series(close).rolling(10).mean().to_numpy()
+    use_atr = params.get("stop_mode", "atr") == "atr" and "atr" in df.columns
+    atr = df["atr"].astype(float).to_numpy() if use_atr else None
     dates = df["date"].astype(str).str[:10].to_numpy() if "date" in df.columns else np.arange(len(df)).astype(str)
 
     trades: list[dict] = []
@@ -88,13 +92,14 @@ def backtest(df: pd.DataFrame, params: dict | None = None, market_df: pd.DataFra
             i += 1  # 跳空過大放棄，隔天可重新評估
             continue
 
+        trade_stop = stop_pct_from_atr(atr[i] if atr is not None and np.isfinite(atr[i]) else None, c, params) if use_atr else stop
         if exit_mode == "trailing":
-            gross, exit_idx = _trailing_exit(i + 1, entry, close, opens, ma10, stop, be_trigger, max_hold)
+            gross, exit_idx = _trailing_exit(i + 1, entry, close, opens, ma10, trade_stop, be_trigger, max_hold)
         else:
-            gross, exit_idx = _fixed_exit(i + 1, entry, close, highs, lows, hold_days, target, stop)
+            gross, exit_idx = _fixed_exit(i + 1, entry, close, highs, lows, hold_days, target, trade_stop)
         if gross is None:
             break
-        trades.append({"entry_date": dates[i + 1], "exit_date": dates[exit_idx], "ret": float(gross - cost)})
+        trades.append({"entry_date": dates[i + 1], "exit_date": dates[exit_idx], "ret": float(gross - cost), "stop": trade_stop})
         i = exit_idx + 1  # 不重疊：出場後才找下一筆
 
     if not trades:

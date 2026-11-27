@@ -37,7 +37,7 @@ def save_positions(positions: list[dict[str, Any]], path: pathlib.Path = POSITIO
             ws = sh.worksheet("Positions")
         except gspread.WorksheetNotFound:
             ws = sh.add_worksheet(title="Positions", rows=100, cols=8)
-        headers = ["stock_id", "name", "shares", "avg_cost", "archetype", "peak_price"]
+        headers = ["stock_id", "name", "shares", "avg_cost", "archetype", "peak_price", "stop_pct"]
         rows = [headers] + [[p.get(h, "") for h in headers] for p in positions]
         ws.clear()
         ws.update(values=rows, range_name="A1")

@@ -7,6 +7,7 @@ from .config import CONFIG
 from .data import get_fundamental, get_price_history
 from .indicators import add_indicators, tech_score_at
 from .backtest import backtest
+from .risk import stop_pct_from_atr
 from .volume import detect_patterns, verdict as volume_verdict
 import json
 import pathlib
@@ -163,16 +164,20 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                 result["risk_notes"].append(f"5日漲幅 +{chg_5d:.1f}% > {max_chg5:.0f}%，防隔日追高，BUY→WATCH")
 
         entry = float(latest["close"])
-        stop_price = round(entry * (1 - params["stop_loss"]), 2)
+        stop_pct = stop_pct_from_atr(latest.get("atr"), entry, params)
+        stop_price = round(entry * (1 - stop_pct), 2)
         target_price = round(entry * (1 + params["target_return"]), 2)
-        rr = round(params["target_return"] / params["stop_loss"], 2)
-        position_pct = min(2.0 / (params["stop_loss"] * 100) * 100, 20.0)
+        rr = round(params["target_return"] / stop_pct, 2)
+        # 每筆最多虧總資金 2%：部位 = 2% ÷ 停損幅度（上限 20%）。ATR 停損已依波動率調整部位
+        position_pct = min(2.0 / (stop_pct * 100) * 100, 20.0)
         # 波動率倉位縮放：近 20 日年化波動超過目標值時，部位按比例縮小（最低縮到 1/4）
         ann_vol = None
         target_vol = float(params.get("target_annual_vol", 0.35) or 0.0)
         rets = px["close"].astype(float).pct_change().dropna().tail(20)
-        if target_vol > 0 and len(rets) >= 10:
+        if len(rets) >= 10:
             ann_vol = float(rets.std() * (252 ** 0.5))
+        # 固定停損時才另外依波動率縮部位；ATR 停損已讓高波動股停損變寬、部位變小，避免重複打折
+        if ann_vol is not None and target_vol > 0 and params.get("stop_mode", "atr") != "atr":
             if ann_vol > target_vol:
                 scale = max(0.25, target_vol / ann_vol)
                 result["risk_notes"].append(
@@ -184,7 +189,7 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
         else:
             exit_txt = f"停利 +{params['target_return']*100:.0f}%"
         entry_rule = (
-            f"明日以開盤價進場，停損 -{params['stop_loss']*100:.0f}% / {exit_txt}（下方參考價為今日收盤）"
+            f"明日以開盤價進場，停損 -{stop_pct*100:.1f}% / {exit_txt}（下方參考價為今日收盤）"
         )
 
         if bt.get("samples", 0) < 8:
@@ -235,6 +240,7 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
             "entry_price": entry,
             "bar_date": str(px["date"].iloc[-1])[:10] if "date" in px.columns else "",
             "stop_loss_price": stop_price,
+            "stop_loss_pct": round(stop_pct * 100, 1),
             "target_price": target_price,
             "risk_reward_ratio": rr,
             "position_size_pct": round(position_pct, 1),

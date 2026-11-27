@@ -78,6 +78,11 @@ _EXTRA_PARAM_DEFAULTS: dict = {
     "exit_mode": "trailing",      # trailing = 模擬實盤移動停利（預設，與持倉健檢一致）；fixed = 固定持有＋停損停利
     "breakeven_trigger_pct": 0.06,# trailing：波段高點達 +6% 後停損上移到成本
     "max_hold_days": 60,          # trailing：最長持有天數
+    # 停損
+    "stop_mode": "atr",           # atr = 依波動率（預設）；fixed = 固定 stop_loss
+    "atr_stop_mult": 2.5,         # 停損 = 2.5 × ATR14 ÷ 收盤
+    "stop_min_pct": 0.04,         # ATR 停損下限
+    "stop_max_pct": 0.15,         # ATR 停損上限
 }
 
 
@@ -201,6 +206,10 @@ def validate_strategy(data: dict) -> dict:
         if key == "exit_mode":
             if v not in ("fixed", "trailing"):
                 raise StrategyError("exit_mode 必須是 fixed 或 trailing")
+            clean_params[key] = v
+        elif key == "stop_mode":
+            if v not in ("fixed", "atr"):
+                raise StrategyError("stop_mode 必須是 fixed 或 atr")
             clean_params[key] = v
         elif key == "v34_factors":
             if not isinstance(v, dict) or not all(

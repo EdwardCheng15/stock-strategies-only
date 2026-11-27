@@ -3,6 +3,7 @@ from typing import Any
 from .data import get_fundamental, get_price_history
 from .sector_router import classify_stock_archetype
 from .portfolio_guard import check_holding_health, load_positions, save_positions
+from .risk import stop_pct_for_prices
 
 ARCH_SL = {"archetype_growth": 0.08, "archetype_turnaround": 0.07, "archetype_value": 0.05, "archetype_etf": 0.12}
 def _owner_tokens() -> tuple[str, ...]:
@@ -34,6 +35,20 @@ def parse_broker_screenshot(image_path: str | pathlib.Path) -> tuple[str, list[d
     cleaned = [{"stock_id": str(i["stock_id"]).strip(), "name": str(i.get("name", "")).strip(), "shares": int(float(i.get("shares", 0))), "avg_cost": float(i.get("avg_cost", 0))} for i in items if str(i.get("stock_id", "")).strip() and float(i.get("avg_cost", 0)) > 0]
     return (str(parsed.get("account_header", "")).strip() if isinstance(parsed, dict) else ""), cleaned
 
+def _position_stop_pct(pos: dict[str, Any], old: dict[str, Any], px, archetype: str) -> float:
+    """持倉停損幅度：ETF 固定 12%；個股沿用已存的 stop_pct，沒有才依 ATR 計算一次並存起來（之後固定不變）。"""
+    if archetype == "archetype_etf":
+        return ARCH_SL["archetype_etf"]
+    for src in (pos, old):
+        try:
+            v = float(src.get("stop_pct") or 0)
+            if 0 < v < 1:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return stop_pct_for_prices(px)
+
+
 def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_note: str = "") -> str:
     if not positions: return "📭 未解析到有效持倉。"
     old_map = {str(p.get("stock_id", "")).strip(): p for p in load_positions()}
@@ -53,9 +68,11 @@ def audit_positions(positions: list[dict[str, Any]], save: bool = False, header_
             else:
                 st, lbl, _ = classify_stock_archetype(px, get_fundamental(sid))
             peak = max(float(old_map.get(sid, {}).get("peak_price", 0) or 0), cost, c_px)
-            upd = {**pos, "archetype": st, "peak_price": round(peak, 2)}
+            old = old_map.get(sid, {})
+            sl = _position_stop_pct(pos, old, px, st)
+            upd = {**pos, "archetype": st, "peak_price": round(peak, 2), "stop_pct": round(sl, 4)}
             merged[sid] = upd
-            h = check_holding_health(upd, c_px, ma20 if is_etf else ma10, ma60 if is_etf else ma20, sl_pct=ARCH_SL.get(st, 0.08))
+            h = check_holding_health(upd, c_px, ma20 if is_etf else ma10, ma60 if is_etf else ma20, sl_pct=sl)
             if h["pnl_pct"] <= -15.0:
                 low20 = float(cs.tail(20).min())
                 h["advice"] = f"🟡 深套反彈站上月線({ma20:.2f})，可分批減碼降成本" if c_px >= ma20 else f"🟣 歷史深套整理（月線反壓 {ma20:.2f}｜破20日低 {low20:.2f} 停損）"
@@ -131,8 +148,17 @@ def buy_positions(tokens: list[str]) -> str:
                 fund = get_fundamental(sid)
                 if isinstance(fund, dict): name = str(fund.get("stock_name", "") or fund.get("name", "")).strip()
             except Exception: pass
+            stop_pct = None
+            if not sid.startswith("00"):
+                try:
+                    stop_pct = stop_pct_for_prices(get_price_history(sid, years=1))
+                except Exception:
+                    stop_pct = None
             pos_map[sid] = {"stock_id": sid, "name": name, "shares": qty, "avg_cost": round(px, 2), "peak_price": round(px, 2)}
-            logs.append(f"🆕 *{sid} {name}* 建倉 {qty:,} 股 @ {px:.2f}")
+            if stop_pct:
+                pos_map[sid]["stop_pct"] = round(stop_pct, 4)
+            stop_txt = f"｜停損 {px*(1-stop_pct):.2f}（-{stop_pct*100:.1f}%，依波動率）" if stop_pct else ""
+            logs.append(f"🆕 *{sid} {name}* 建倉 {qty:,} 股 @ {px:.2f}{stop_txt}")
     save_positions(list(pos_map.values()))
     cap = float(os.environ.get("TOTAL_CAPITAL", "200000") or 200000)
     est_val = sum(int(p.get("shares", 0)) * float(p.get("avg_cost") or 0) for p in pos_map.values())
