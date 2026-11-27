@@ -10,7 +10,7 @@ on:
 jobs:
   run-premarket:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -25,8 +25,9 @@ jobs:
         run: uv sync
 
       # FinMind parquet 快取跨次執行保留，避免每次全量重抓撞 API 額度
+      # 拆成 restore / save：即使選股步驟逾時或失敗，已抓到的資料也會存起來，下次就快了
       - name: Restore FinMind cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .cache/finmind
           key: finmind-${{ runner.os }}-${{ github.run_id }}
@@ -43,4 +44,12 @@ jobs:
           # 庫存以 Google Sheets「Positions」分頁為準（CI 上沒有本機 positions.json）
           TOTAL_CAPITAL: ${{ secrets.TOTAL_CAPITAL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: uv run python premarket.py
+        timeout-minutes: 15
+        run: uv run python -u premarket.py
+
+      - name: Save FinMind cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/finmind
+          key: finmind-${{ runner.os }}-${{ github.run_id }}
