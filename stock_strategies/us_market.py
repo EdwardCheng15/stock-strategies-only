@@ -380,3 +380,40 @@ def get_us_market_summary(
         lines.append("\n※ 註：標示「★」者為昨日選股訊號 BUY/WATCH 標的")
 
     return "\n".join(lines)
+
+
+def format_index_overview(stats: dict[str, dict]) -> list[str]:
+    """美股主要指數精簡兩行（給盤前最終清單用）。"""
+    if not stats:
+        return ["⚪ 美股資料取不到"]
+    parts = []
+    for sym, label in MARKET_INDICES.items():
+        st = stats.get(sym)
+        if not st:
+            continue
+        short = {"^GSPC": "標普", "^DJI": "道瓊", "^IXIC": "那指", "^SOX": "費半", "TSM": "TSM", "EWT": "EWT", "^VIX": "VIX"}.get(sym, label)
+        if sym == "^VIX":
+            parts.append(f"{short} {st['close']:.1f}({st['pct']:+.0f}%)")
+        else:
+            parts.append(f"{short} {st['pct']:+.2f}%")
+    half = (len(parts) + 1) // 2
+    return ["🇺🇸 " + "｜".join(parts[:half]), "　 " + "｜".join(parts[half:])] if parts else []
+
+
+def format_candidate_chains(stats: dict[str, dict], candidates: dict[str, str], threshold: float = 2.0) -> list[str]:
+    """只列出和盤後候選股有關的美股供應鏈：每條鏈的美股漲跌 → 對應到哪幾檔候選。
+    candidates: {代號: 名稱}"""
+    lines = []
+    for g in SUPPLY_CHAIN_GROUPS:
+        hit = [f"{candidates[c]}({c})" for c in g["tw_stocks"] if c in candidates]
+        if not hit:
+            continue
+        tick = []
+        for sym, cname in g["tickers"].items():
+            if sym in stats:
+                pc = stats[sym]["pct"]
+                mark = "🔥" if pc >= threshold else ("❄️" if pc <= -threshold else "")
+                tick.append(f"{mark}{cname} {pc:+.1f}%")
+        if tick:
+            lines.append(f"▸ {g['name']}：{' / '.join(tick)} → {'、'.join(hit)}")
+    return lines

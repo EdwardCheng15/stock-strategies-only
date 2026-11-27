@@ -6,7 +6,7 @@
   3. 依夜盤與美股風險確認 BUY（大跌/強警示 → 暫緩；警示 → 收緊追價上限），
      並用連動美股、費半/那指、EWT 推估每檔今日方向（強逆風 → 該檔暫緩）
   4. 依目前庫存與 TOTAL_CAPITAL 分配建議部位
-  5. 推三則：今日最終清單 → 美股供應鏈連動 → 持倉健檢與資金水位
+  5. 推兩則：今日最終清單（含美股指數、候選股 × 美股推估與供應鏈）→ 持倉健檢與資金水位
 
 執行: uv run python premarket.py
 """
@@ -91,12 +91,14 @@ def main():
 
     print("發送 Telegram：今日最終清單...")
     send_telegram(format_final_list(confirmed, batch_day, night, us_risk, staleness_note(batch_day),
-                                    open_outlook=open_outlook))
+                                    open_outlook=open_outlook, us_stats=us_stats))
     time.sleep(0.5)
 
-    print("發送 Telegram：美股供應鏈連動...")
-    send_telegram(get_us_market_summary(signals=batch, threshold=2.0, stats=us_stats).lstrip("\n"))
-    time.sleep(0.5)
+    # 完整美股供應鏈快報預設不另外推（已併入最終清單）；需要時在 .env 設 PREMARKET_FULL_US=1
+    if os.environ.get("PREMARKET_FULL_US") == "1":
+        print("發送 Telegram：完整美股供應鏈快報...")
+        send_telegram(get_us_market_summary(signals=batch, threshold=2.0, stats=us_stats).lstrip("\n"))
+        time.sleep(0.5)
 
     # 持倉移動停利健檢與資金水位（save=True 以更新波段最高價）
     try:

@@ -143,6 +143,7 @@ def format_final_list(
     stale_note: str = "",
     watch_limit: int = 6,
     open_outlook: dict | None = None,
+    us_stats: dict | None = None,
 ) -> str:
     today = datetime.now()
     wd = "一二三四五六日"[today.weekday()]
@@ -164,6 +165,9 @@ def format_final_list(
     us_line = us_label.get(us_risk.get("level", "unknown"), "")
     if us_risk.get("reasons"):
         us_line += f"（{'；'.join(us_risk['reasons'][:2])}）"
+    if us_stats:
+        from .us_market import format_index_overview
+        lines.extend(format_index_overview(us_stats))
     lines.append(us_line)
     if open_outlook and open_outlook.get("est") is not None:
         lines.append(f"🇺🇸 美股推估台股開盤：{open_outlook['label']}（{open_outlook['basis']}）")
@@ -210,6 +214,16 @@ def format_final_list(
             star = f"｜{uo['tag']}" if uo.get("level") in ("tail", "strong_tail") else ""
             lines.append(f"• {s.get('stock_id')} {s.get('name')} {s.get('signal_score')}分{star}")
         lines.append("")
+
+    # 候選股相關的美股供應鏈（只列有關的，取代原本整份美股快報）
+    if us_stats:
+        from .us_market import format_candidate_chains
+        cands = {str(s.get("stock_id")): str(s.get("name", "")) for s in buys + confirmed["downgraded"] + watches}
+        chain_lines = format_candidate_chains(us_stats, cands)
+        if chain_lines:
+            lines.append("🔗 *候選股 × 美股供應鏈*")
+            lines.extend(chain_lines)
+            lines.append("")
 
     if buys:
         lines.append(f"📐 {exit_rule_text()}；停損依各檔停損價")
