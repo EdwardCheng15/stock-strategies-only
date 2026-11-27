@@ -233,8 +233,13 @@ def fetch_finmind_cached(
         if cached is not None and len(cached) and "date" in cached.columns:
             inc_start = (cached["date"].max() - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
             params["start_date"] = inc_start
-        payload = _rate_limited_get(params, timeout=timeout, max_retries=max_retries)
-        fresh = _api_to_df(payload)
+        try:
+            payload = _rate_limited_get(params, timeout=timeout, max_retries=1 if cached is not None else max_retries)
+            fresh = _api_to_df(payload)
+        except FinMindRateLimitError:
+            if cached is not None and len(cached):
+                return _slice_dates(cached, start_date, end_date)
+            raise
         if cached is not None and len(cached):
             df = pd.concat([cached, fresh], ignore_index=True)
             # 全欄位去重：移除增量 overlap 的完全重複列。不可用 subset=["date"] 去重——

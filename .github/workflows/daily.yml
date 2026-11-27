@@ -3,7 +3,7 @@ name: V3 Daily Signal
 on:
   schedule:
     # 兩段式第一段：台灣時間週一至週五 17:45（UTC 09:45），等 FinMind 當日收盤資料更新後再跑
-    - cron: '45 9 * * 1-5'
+    - cron: '15 10 * * 1-5'
   workflow_dispatch:
 
 jobs:
