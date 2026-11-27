@@ -375,7 +375,7 @@ def stock_us_verdict(stock_id: str, stats: dict[str, dict], chains: dict[str, di
 
 
 ACTION_TEXT = {
-    "strong_head": "BUY→暫緩",
+    "strong_head": "強逆風，等開盤止穩再進",
     "head": "等開盤止穩再進",
     "neutral": "照計畫",
     "tail": "照計畫",

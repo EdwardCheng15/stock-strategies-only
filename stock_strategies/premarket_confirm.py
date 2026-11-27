@@ -69,8 +69,8 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
       - 美股警示 → BUY 保留，追價上限收緊到 +2%
       - 夜盤小跌 → BUY 保留，標註逆風
       - 所屬美股供應鏈（us_market.stock_us_verdict）：
-          強逆風（任一所屬鏈平均 ≤ -3%）→ 該檔 BUY 暫緩
-          逆風 → 保留，等開盤止穩再進；強順風 → 保留，預期開高、超過放棄價不追
+          強逆風／逆風 → 保留 BUY，提醒等開盤止穩再進（回測顯示強逆風暫緩沒有幫助，只提醒）
+          強順風 → 保留，預期開高、超過放棄價不追
     回傳 {"buys", "downgraded", "watches", "header_notes"}，每檔附 gap_cap_price。
     """
     big = float(CONFIG.get("night_gap_big", 1.5))
@@ -113,8 +113,6 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
             item["confirm_notes"].append(f"夜盤大跌 {night_pct:+.1f}%")
         if us_level == "strong_warn":
             item["confirm_notes"].append("美股強警示")
-        if uv["level"] == "strong_head":
-            item["confirm_notes"].append(f"所屬美股供應鏈強逆風（{'、'.join(uv['chains'])}）")
         if item["confirm_notes"]:
             downgraded.append(item)
             continue
@@ -122,7 +120,10 @@ def confirm_candidates(batch: list[dict], night: dict | None, us_risk: dict, us_
             item["confirm_notes"].append(f"夜盤逆風 {night_pct:+.1f}%，等開盤止穩")
         if us_level == "warn":
             item["confirm_notes"].append("美股警示，勿追跳空")
-        if uv["level"] == "head":
+        if uv["level"] == "strong_head":
+            # 回測：強逆風擋掉的 16 筆照做平均 +7.07%，沒有證據有幫助 → 只提醒、不暫緩
+            item["confirm_notes"].append(f"所屬美股供應鏈強逆風（{'、'.join(uv['chains'])}），開盤恐走弱，等止穩再進")
+        elif uv["level"] == "head":
             item["confirm_notes"].append(f"美股供應鏈逆風（均 {uv['avg']:+.1f}%），等開盤止穩再進")
         elif uv["level"] == "strong_tail":
             item["confirm_notes"].append(f"美股供應鏈強漲（均 {uv['avg']:+.1f}%），預期開高，超過放棄價不追")
