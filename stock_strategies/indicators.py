@@ -25,6 +25,11 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["dif"] = ema12 - ema26
     df["dea"] = df["dif"].ewm(span=9, adjust=False).mean()
     df["macd_hist"] = df["dif"] - df["dea"]
+    df["macd_hist_prev"] = df["macd_hist"].shift(1)
+
+    # KD 真正的黃金交叉：K 由下往上穿越 D，近 3 根 K 線內發生過
+    cross = (df["k"] > df["d"]) & (df["k"].shift(1) <= df["d"].shift(1))
+    df["kd_cross_recent"] = cross.astype(float).rolling(3, min_periods=1).max().astype(bool)
 
     tr = pd.concat([
         df["high"] - df["low"],
@@ -55,33 +60,50 @@ def tech_score_at(row: pd.Series, params: dict | None = None) -> dict:
     score = 0.0
     signals: list[str] = []
 
-    if use_ma and pd.notna(row["ma20"]) and pd.notna(row["ma60"]):
-        if row["close"] > row["ma20"] > row["ma60"]:
+    def _v(key):
+        val = row.get(key) if hasattr(row, "get") else None
+        return val if val is not None and pd.notna(val) else None
+
+    close, ma20, ma60 = _v("close"), _v("ma20"), _v("ma60")
+    uptrend = ma20 is not None and ma60 is not None and ma20 > ma60
+
+    # 1. 趨勢：均線多頭排列
+    if use_ma and close is not None and ma20 is not None and ma60 is not None:
+        if close > ma20 > ma60:
             score += max_per
             signals.append("均線多頭")
-        elif row["close"] > row["ma20"]:
+        elif close > ma20:
             score += max_per * 0.48
 
-    if use_bb and pd.notna(row["bb_lower"]) and pd.notna(row["bb_mid"]):
-        dist = (row["close"] - row["bb_lower"]) / row["bb_lower"]
-        if 0 < dist < 0.03:
+    # 2. 進場位置：多頭趨勢中回測月線支撐（取代舊的布林下軌反彈，避免順勢與逆勢條件互相矛盾）
+    #    沿用 use_bollinger_bounce 開關，策略 JSON 不需修改
+    if use_bb and uptrend and close is not None:
+        dist = close / ma20 - 1.0
+        if -0.02 <= dist <= 0.03:
             score += max_per
-            signals.append("布林下軌反彈")
-        elif row["close"] < row["bb_mid"]:
+            signals.append("回測月線支撐")
+        elif 0.03 < dist <= 0.06:
             score += max_per * 0.4
 
-    if use_kd and pd.notna(row["k"]) and pd.notna(row["d"]):
-        if row["k"] > row["d"] and row["k"] < 80:
+    # 3. KD：近 3 日真正黃金交叉且未過熱
+    k, d = _v("k"), _v("d")
+    if use_kd and k is not None and d is not None:
+        recent_cross = bool(row.get("kd_cross_recent", False)) if hasattr(row, "get") else False
+        if recent_cross and k > d and k < 80:
             score += max_per
             signals.append("KD黃金交叉")
-        elif row["k"] > row["d"]:
-            score += max_per * 0.4
+        elif k > d and k < 80:
+            score += max_per * 0.5
+        elif k > d:
+            score += max_per * 0.2
 
-    if use_macd and pd.notna(row["macd_hist"]):
-        if row["macd_hist"] > 0 and row["dif"] > row["dea"]:
+    # 4. MACD：柱狀體翻正且持續放大
+    hist, prev_hist = _v("macd_hist"), _v("macd_hist_prev")
+    if use_macd and hist is not None:
+        if hist > 0 and prev_hist is not None and hist > prev_hist:
             score += max_per
             signals.append("MACD多頭")
-        elif row["macd_hist"] > 0:
-            score += max_per * 0.4
+        elif hist > 0:
+            score += max_per * 0.5
 
     return {"score": int(round(score)), "signals": signals}

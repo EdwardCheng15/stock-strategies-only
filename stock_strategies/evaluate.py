@@ -16,6 +16,20 @@ from .context import build_context
 from .factors.registry import compute_all_factors
 
 
+_MARKET_DF_CACHE: dict = {}
+
+
+def _market_df():
+    """加權指數日 K（回測大盤濾網用），一次執行只抓一次；失敗回 None。"""
+    if "df" not in _MARKET_DF_CACHE:
+        try:
+            from .datasources import get_index_history
+            _MARKET_DF_CACHE["df"] = get_index_history("TAIEX")
+        except Exception:
+            _MARKET_DF_CACHE["df"] = None
+    return _MARKET_DF_CACHE["df"]
+
+
 def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional[dict]:
     """評估一檔股票。若未指定特殊策略，自動依所屬產業套用對應策略檔。"""
     explicit_id = (strategy or {}).get("id", "")
@@ -63,7 +77,7 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
         px = add_indicators(px)
         latest = px.iloc[-1]
         ts = tech_score_at(latest, params)
-        bt = backtest(px, params)
+        bt = backtest(px, params, _market_df())
 
         if params["use_volume_patterns"]:
             vp = detect_patterns(px)
@@ -228,5 +242,6 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
 
     except Exception as e:
         result["action"] = "ERROR"
-        result["risk_notes"].append(f"錯誤: {str(e)[:80]}")
+        result["error_type"] = type(e).__name__
+        result["risk_notes"].append(f"錯誤({type(e).__name__}): {str(e)[:80]}")
         return result

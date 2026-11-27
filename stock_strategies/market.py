@@ -1,8 +1,8 @@
 """大盤狀態濾鏡
 
 抓加權指數 (TAIEX) 的日 K 線，判斷目前是否站上 20 日均線。
-若跌破月線，main.py 會把所有 BUY 訊號降級為 WATCH，避免在空頭市場
-被連續洗損。
+若跌破月線，main.py 會把 BUY 扣 6 分（扣完仍過門檻才保留），避免在空頭市場
+被連續洗損。大盤資料抓不到時保守處理，視同跌破月線。
 """
 
 from .datasources import get_index_history
@@ -13,8 +13,8 @@ def get_market_state(ma_period: int = 20) -> dict:
     try:
         df = get_index_history("TAIEX")
         if len(df) < ma_period + 1:
-            return {"bullish": True, "close": None, "ma20": None,
-                    "note": "⚠️ 大盤資料不足，暫不套用濾鏡"}
+            return {"bullish": False, "data_ok": False, "close": None, "ma20": None,
+                    "note": "⚠️ 大盤資料不足，保守視同跌破月線（BUY 扣 6 分、曝險上限 40%）"}
         df = df.copy()
         df["ma20"] = df["close"].rolling(ma_period).mean()
         latest = df.iloc[-1]
@@ -25,10 +25,10 @@ def get_market_state(ma_period: int = 20) -> dict:
             note = f"🟢 加權 {close:.0f} 站上 {ma_period} 日線 ({pct:+.1f}%)，BUY 訊號照常發出"
         else:
             note = f"🔴 加權 {close:.0f} 跌破 {ma_period} 日線 ({pct:+.1f}%)，BUY 全數降為 WATCH"
-        return {"bullish": bullish, "close": close, "ma20": ma20, "note": note}
+        return {"bullish": bullish, "data_ok": True, "close": close, "ma20": ma20, "note": note}
     except Exception as e:
-        return {"bullish": True, "close": None, "ma20": None,
-                "note": f"⚠️ 大盤狀態取得失敗（{str(e)[:60]}），暫不套用濾鏡"}
+        return {"bullish": False, "data_ok": False, "close": None, "ma20": None,
+                "note": f"⚠️ 大盤狀態取得失敗（{str(e)[:60]}），保守視同跌破月線（BUY 扣 6 分、曝險上限 40%）"}
 
 
 def apply_market_filter(results: list[dict], market: dict) -> int:

@@ -70,7 +70,7 @@ _EXTRA_PARAM_DEFAULTS: dict = {
     "max_gap_up_pct": 0.0,        # 回測時隔日跳空開高上限（0 = 關閉）
     # V3.4 BUY 放行濾網
     "min_backtest_winrate": 0.52, # 歷史勝率下限
-    "min_backtest_samples": 20,   # 勝率需至少這麼多筆回測交易才採信
+    "min_backtest_samples": 10,   # 勝率需至少這麼多筆「不重疊」回測交易才採信（3 年最多約 35 筆）
     "max_chg_5d_pct": 15.0,       # 5 日漲幅上限 %（防隔日追高）
     "target_annual_vol": 0.35,    # 波動率倉位：年化波動超過此值時按比例縮小建議部位
 }

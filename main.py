@@ -76,9 +76,13 @@ def main():
                     "name": f"{c.get('name', '')}[全市場突圍]",
                     "strategy": "default",
                 })
-        print(f"🔥 全市場動能候選池：額外納入 {len(dynamic_pool)} 檔強勢突圍股進入精算")
+        print(f"🔥 全市場動能候選池：{len(dynamic_pool)} 檔")
     except Exception as e:
         print(f"⚠️ 全市場候選池取得失敗: {e}")
+
+    # 2d. 省 API 額度：全市場候選先只用價格算技術分，過門檻才進完整評分（基本面＋V3.4 因子很耗額度）
+    dynamic_pool, prescreen_skipped = _prescreen_by_tech(dynamic_pool)
+    print(f"  → 技術面初篩後保留 {len(dynamic_pool)} 檔，略過 {prescreen_skipped} 檔")
 
     combined_list = list(watchlist) + dynamic_pool
 
@@ -154,6 +158,8 @@ def main():
     today_str = datetime.now().strftime("%Y-%m-%d")
     bar_dates = [r.get("bar_date") for r in results if r.get("bar_date")]
     data_note = ""
+    errors = [r for r in results if r.get("action") == "ERROR"]
+    rate_limited = [r for r in errors if r.get("error_type") == "FinMindRateLimitError"]
     if bar_dates:
         latest_bar = max(bar_dates)
         stale = sum(1 for d in bar_dates if d < today_str)
@@ -161,8 +167,15 @@ def main():
             data_note = f"⚠️ 資料尚未更新到今天（最新 K 線 {latest_bar}），以下候選以 {latest_bar} 收盤計算"
         elif stale:
             data_note = f"⚠️ {stale}/{len(bar_dates)} 檔資料尚未更新到今天"
-        if data_note:
-            print(data_note)
+    if rate_limited:
+        ids = "、".join(str(r["stock_id"]) for r in rate_limited[:8])
+        data_note += f"\n⚠️ FinMind API 額度不足，{len(rate_limited)} 檔未評分（{ids}）"
+    elif errors:
+        ids = "、".join(str(r["stock_id"]) for r in errors[:8])
+        data_note += f"\n⚠️ {len(errors)} 檔評分失敗（{ids}）"
+    data_note = data_note.strip()
+    if data_note:
+        print(data_note)
 
     print("發送 Telegram：盤後候選清單...")
     msg = format_candidates(results, market=market, data_note=data_note)
@@ -187,6 +200,31 @@ def main():
         print(f"⚠️ 快取清理略過: {e}", file=sys.stderr)
 
     print("✅ 完成")
+
+
+def _prescreen_by_tech(pool: list[dict], min_tech: float | None = None) -> tuple[list[dict], int]:
+    """只用（已快取的）日 K 計算技術分，低於 BUY 技術門檻的直接略過，不抓基本面與因子資料。"""
+    from stock_strategies.data import get_price_history
+    from stock_strategies.indicators import add_indicators, tech_score_at
+    from stock_strategies.loader import merge_params
+
+    params = merge_params(None)
+    threshold = float(min_tech if min_tech is not None else params["min_tech_score_for_buy"])
+    kept, skipped = [], 0
+    for row in pool:
+        try:
+            px = get_price_history(str(row["stock_id"]), params["backtest_years"])
+            if len(px) < 100:
+                skipped += 1
+                continue
+            score = tech_score_at(add_indicators(px).iloc[-1], params)["score"]
+            if score >= threshold:
+                kept.append(row)
+            else:
+                skipped += 1
+        except Exception:
+            kept.append(row)  # 初篩失敗不擋，交給完整評分處理
+    return kept, skipped
 
 
 def _format_perf_message(stats: dict) -> str:

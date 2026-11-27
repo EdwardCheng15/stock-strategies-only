@@ -18,4 +18,5 @@ def test_market_state_bullish(monkeypatch):
 def test_market_state_handles_empty(monkeypatch):
     monkeypatch.setattr(market, "get_index_history", lambda *a, **k: pd.DataFrame())
     state = market.get_market_state()
-    assert state["bullish"] is True   # 資料不足 → 不套濾鏡（沿用原行為）
+    assert state["bullish"] is False  # 資料不足 → 保守視同跌破月線
+    assert state["data_ok"] is False
